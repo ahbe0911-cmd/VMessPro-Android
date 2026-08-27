@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,7 +16,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.weight
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -36,10 +37,10 @@ import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -90,100 +91,92 @@ fun AppRoot() {
                 .fillMaxSize()
                 .background(
                     Brush.linearGradient(
-                        colors = listOf(
-                            Background,
-                            Color(0xFF071426),
-                            Background,
-                        ),
+                        colors = listOf(Background, Color(0xFF071426), Background),
                         start = Offset.Zero,
                         end = Offset(1100f, 1900f),
                     )
                 )
         ) {
-            Box(
-                modifier = Modifier
-                    .size(310.dp)
-                    .align(Alignment.TopEnd)
-                    .background(
-                        Brush.radialGradient(
-                            listOf(Color(0x2436D9FF), Color.Transparent)
-                        ),
-                        CircleShape,
-                    )
-            )
-            Box(
-                modifier = Modifier
-                    .size(260.dp)
-                    .align(Alignment.CenterStart)
-                    .background(
-                        Brush.radialGradient(
-                            listOf(Color(0x1FA98BFF), Color.Transparent)
-                        ),
-                        CircleShape,
-                    )
-            )
+            DecorativeGlow()
 
-            Column(modifier = Modifier.fillMaxSize()) {
+            Scaffold(
+                modifier = Modifier.fillMaxSize(),
+                containerColor = Color.Transparent,
+                contentColor = TextPrimary,
+                bottomBar = {
+                    PremiumBottomBar(selectedTab) { selectedTab = it }
+                },
+            ) { innerPadding ->
                 Column(
                     modifier = Modifier
-                        .weight(1f)
+                        .fillMaxSize()
+                        .padding(innerPadding)
                         .statusBarsPadding()
-                        .padding(top = 10.dp)
                 ) {
                     AppHeader()
-
                     when (AppTab.entries[selectedTab]) {
                         AppTab.Home -> HomeScreen()
                         AppTab.Servers -> EmptySection(
                             title = "سرورها",
-                            subtitle = "کانفیگ‌های VMess، VLESS و Reality شما اینجا نمایش داده می‌شوند.",
+                            subtitle = "VMess، VLESS و Reality را از این بخش مدیریت کنید.",
                             icon = Icons.Rounded.Dns,
                             actionText = "افزودن کانفیگ",
                         )
                         AppTab.Subscriptions -> EmptySection(
                             title = "اشتراک‌ها",
-                            subtitle = "لینک اشتراک اضافه کنید تا سرورها به‌صورت یکپارچه مدیریت شوند.",
+                            subtitle = "لینک‌های Subscription و به‌روزرسانی سرورها در این بخش قرار می‌گیرند.",
                             icon = Icons.Rounded.CloudSync,
                             actionText = "افزودن اشتراک",
                         )
                         AppTab.Settings -> SettingsScreen()
                     }
                 }
-
-                NavigationBar(
-                    modifier = Modifier.navigationBarsPadding(),
-                    containerColor = Color(0xF20A1221),
-                    tonalElevation = 0.dp,
-                ) {
-                    AppTab.entries.forEachIndexed { index, tab ->
-                        NavigationBarItem(
-                            selected = selectedTab == index,
-                            onClick = { selectedTab = index },
-                            icon = {
-                                Icon(
-                                    imageVector = tab.icon,
-                                    contentDescription = tab.title,
-                                    modifier = Modifier.size(22.dp),
-                                )
-                            },
-                            label = {
-                                Text(
-                                    tab.title,
-                                    fontSize = 10.sp,
-                                    fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Medium,
-                                )
-                            },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = NeonBlue,
-                                selectedTextColor = NeonBlue,
-                                indicatorColor = Color(0xFF102B40),
-                                unselectedIconColor = TextTertiary,
-                                unselectedTextColor = TextTertiary,
-                            ),
-                        )
-                    }
-                }
             }
+        }
+    }
+}
+
+@Composable
+private fun DecorativeGlow() {
+    Box(
+        modifier = Modifier
+            .size(300.dp)
+            .background(
+                Brush.radialGradient(listOf(Color(0x2436D9FF), Color.Transparent)),
+                CircleShape,
+            )
+    )
+}
+
+@Composable
+private fun PremiumBottomBar(selectedTab: Int, onSelect: (Int) -> Unit) {
+    NavigationBar(
+        modifier = Modifier.navigationBarsPadding(),
+        containerColor = Color(0xF20A1221),
+        tonalElevation = 0.dp,
+    ) {
+        AppTab.entries.forEachIndexed { index, tab ->
+            NavigationBarItem(
+                selected = selectedTab == index,
+                onClick = { onSelect(index) },
+                icon = {
+                    Icon(tab.icon, contentDescription = tab.title, modifier = Modifier.size(22.dp))
+                },
+                label = {
+                    Text(
+                        tab.title,
+                        fontSize = 10.sp,
+                        fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Medium,
+                    )
+                },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = NeonBlue,
+                    selectedTextColor = NeonBlue,
+                    indicatorColor = Color(0xFF102B40),
+                    unselectedIconColor = TextTertiary,
+                    unselectedTextColor = TextTertiary,
+                ),
+            )
         }
     }
 }
@@ -195,39 +188,29 @@ private fun AppHeader() {
             .fillMaxWidth()
             .padding(horizontal = 20.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Surface(
-            modifier = Modifier.size(46.dp),
-            shape = RoundedCornerShape(15.dp),
-            color = Color(0xFF10283B),
-            border = BorderStroke(1.dp, Color(0x6636D9FF)),
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    Icons.Rounded.Security,
-                    contentDescription = null,
-                    tint = NeonBlue,
-                    modifier = Modifier.size(25.dp),
-                )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Surface(
+                modifier = Modifier.size(46.dp),
+                shape = RoundedCornerShape(15.dp),
+                color = Color(0xFF10283B),
+                border = BorderStroke(1.dp, Color(0x6636D9FF)),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Rounded.Security,
+                        contentDescription = null,
+                        tint = NeonBlue,
+                        modifier = Modifier.size(25.dp),
+                    )
+                }
             }
-        }
-
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 12.dp)
-        ) {
-            Text(
-                "VMess Pro",
-                color = TextPrimary,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.ExtraBold,
-            )
-            Text(
-                "شبکه امن، سریع و شخصی",
-                color = TextSecondary,
-                fontSize = 11.sp,
-            )
+            Spacer(Modifier.width(11.dp))
+            Column {
+                Text("VMess Pro", color = TextPrimary, fontSize = 21.sp, fontWeight = FontWeight.ExtraBold)
+                Text("شبکه امن، سریع و شخصی", color = TextSecondary, fontSize = 10.sp)
+            }
         }
 
         Surface(
@@ -240,11 +223,7 @@ private fun AppHeader() {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(7.dp)
-                        .background(TextTertiary, CircleShape)
-                )
+                Box(Modifier.size(7.dp).background(TextTertiary, CircleShape))
                 Text("آماده", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
             }
         }
@@ -258,57 +237,35 @@ private fun HomeScreen() {
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp)
-            .padding(bottom = 20.dp)
+            .padding(bottom = 24.dp)
     ) {
-        Spacer(Modifier.height(6.dp))
-
+        Spacer(Modifier.height(4.dp))
         ConnectionHero()
-
         Spacer(Modifier.height(14.dp))
         ServerSelector()
 
         Spacer(Modifier.height(18.dp))
         SectionTitle("دسترسی سریع", "مدیریت اتصال")
         Spacer(Modifier.height(10.dp))
-
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            QuickActionCard(
-                title = "کانفیگ",
-                subtitle = "افزودن دستی",
-                icon = Icons.Rounded.Add,
-                accent = NeonBlue,
-                modifier = Modifier.weight(1f),
-            )
-            QuickActionCard(
-                title = "QR",
-                subtitle = "اسکن سریع",
-                icon = Icons.Rounded.QrCodeScanner,
-                accent = Mint,
-                modifier = Modifier.weight(1f),
-            )
-            QuickActionCard(
-                title = "قوانین",
-                subtitle = "Split Tunnel",
-                icon = Icons.Rounded.Tune,
-                accent = NeonPurple,
-                modifier = Modifier.weight(1f),
-            )
+            QuickActionCard("کانفیگ", "افزودن دستی", Icons.Rounded.Add, NeonBlue)
+            QuickActionCard("اسکن QR", "ورود سریع", Icons.Rounded.QrCodeScanner, Mint)
+            QuickActionCard("Split", "انتخاب برنامه", Icons.Rounded.Tune, NeonPurple)
         }
 
         Spacer(Modifier.height(18.dp))
-        SectionTitle("وضعیت شبکه", "پس از اتصال به‌روزرسانی می‌شود")
+        SectionTitle("وضعیت شبکه", "بعد از اتصال واقعی")
         Spacer(Modifier.height(10.dp))
-
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            MetricCard("Ping", "—", "ms", Icons.Rounded.Speed, NeonBlue, Modifier.weight(1f))
-            MetricCard("دانلود", "—", "MB", Icons.Rounded.CloudSync, Mint, Modifier.weight(1f))
-            MetricCard("آپلود", "—", "MB", Icons.Rounded.CloudSync, NeonPurple, Modifier.weight(1f))
+            MetricCard("Ping", "—", "ms", Icons.Rounded.Speed, NeonBlue)
+            MetricCard("ترافیک", "—", "MB", Icons.Rounded.CloudSync, Mint)
+            MetricCard("سرعت", "—", "Mb/s", Icons.Rounded.Speed, NeonPurple)
         }
 
         Spacer(Modifier.height(18.dp))
@@ -325,7 +282,7 @@ private fun ConnectionHero() {
         border = BorderStroke(1.dp, Color(0xAA183650)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(
@@ -333,78 +290,53 @@ private fun ConnectionHero() {
                         listOf(Color(0x1F36D9FF), Color.Transparent, Color(0x18A98BFF))
                     )
                 )
-                .padding(horizontal = 22.dp, vertical = 24.dp)
+                .padding(horizontal = 22.dp, vertical = 22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Column(
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    "اتصال امن",
-                    color = TextPrimary,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    "برای شروع، یک سرور انتخاب کنید",
-                    color = TextSecondary,
-                    fontSize = 11.sp,
-                )
-
-                Spacer(Modifier.height(22.dp))
-
-                Box(contentAlignment = Alignment.Center) {
-                    Box(
-                        modifier = Modifier
-                            .size(150.dp)
-                            .border(1.dp, Color(0x3336D9FF), CircleShape)
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(126.dp)
-                            .border(1.dp, Color(0x5536D9FF), CircleShape)
-                            .background(
-                                Brush.radialGradient(
-                                    listOf(Color(0xFF173149), Color(0xFF0B1728))
-                                ),
-                                CircleShape,
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(92.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(Color(0xFF2CCCF4), Color(0xFF7474FF))
-                                    )
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                Icons.Rounded.PowerSettingsNew,
-                                contentDescription = "اتصال",
-                                tint = Color(0xFF021019),
-                                modifier = Modifier.size(42.dp),
-                            )
-                        }
-                    }
+                Column {
+                    Text("اتصال امن", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("یک سرور انتخاب کنید", color = TextSecondary, fontSize = 10.sp)
                 }
-
-                Spacer(Modifier.height(18.dp))
-                Text(
-                    "متصل نیست",
-                    color = TextPrimary,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                )
-                Text(
-                    "سرور فعال انتخاب نشده است",
-                    color = TextSecondary,
-                    fontSize = 12.sp,
-                )
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = Color(0xFF101D30),
+                    border = BorderStroke(1.dp, Border),
+                ) {
+                    Text("OFFLINE", color = TextTertiary, fontSize = 9.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+                }
             }
+
+            Spacer(Modifier.height(20.dp))
+            Box(contentAlignment = Alignment.Center) {
+                Box(Modifier.size(154.dp).border(1.dp, Color(0x3336D9FF), CircleShape))
+                Box(Modifier.size(132.dp).border(1.dp, Color(0x5536D9FF), CircleShape))
+                Box(
+                    modifier = Modifier
+                        .size(104.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.linearGradient(listOf(Color(0xFF2CCCF4), Color(0xFF7474FF)))
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Rounded.PowerSettingsNew,
+                        contentDescription = "اتصال",
+                        tint = Color(0xFF03131D),
+                        modifier = Modifier.size(46.dp),
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+            Text("متصل نیست", color = TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+            Text("برای اتصال ابتدا سرور را انتخاب کنید", color = TextSecondary, fontSize = 11.sp)
         }
     }
 }
@@ -419,44 +351,35 @@ private fun ServerSelector() {
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(15.dp),
+            modifier = Modifier.fillMaxWidth().padding(15.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Surface(
-                modifier = Modifier.size(48.dp),
-                shape = RoundedCornerShape(16.dp),
-                color = Color(0xFF10283B),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.Dns, contentDescription = null, tint = NeonBlue)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    modifier = Modifier.size(48.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color(0xFF10283B),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Dns, contentDescription = null, tint = NeonBlue)
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text("سرور فعال", color = TextTertiary, fontSize = 9.sp)
+                    Text(
+                        "سروری انتخاب نشده",
+                        color = TextPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text("VMess / VLESS / Reality", color = TextSecondary, fontSize = 9.sp)
                 }
             }
-
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 12.dp)
-            ) {
-                Text("سرور فعال", color = TextTertiary, fontSize = 10.sp)
-                Text(
-                    "سروری انتخاب نشده",
-                    color = TextPrimary,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text("VMess / VLESS / Reality", color = TextSecondary, fontSize = 10.sp)
-            }
-
-            Icon(
-                Icons.Rounded.KeyboardArrowLeft,
-                contentDescription = null,
-                tint = TextSecondary,
-                modifier = Modifier.size(24.dp),
-            )
+            Icon(Icons.Rounded.KeyboardArrowLeft, contentDescription = null, tint = TextSecondary)
         }
     }
 }
@@ -465,81 +388,59 @@ private fun ServerSelector() {
 private fun SectionTitle(title: String, subtitle: String) {
     Row(
         modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.Bottom,
     ) {
-        Text(
-            title,
-            modifier = Modifier.weight(1f),
-            color = TextPrimary,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.ExtraBold,
-        )
+        Text(title, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
         Text(subtitle, color = TextTertiary, fontSize = 9.sp)
     }
 }
 
 @Composable
-private fun QuickActionCard(
-    title: String,
-    subtitle: String,
-    icon: ImageVector,
-    accent: Color,
-    modifier: Modifier = Modifier,
-) {
+private fun QuickActionCard(title: String, subtitle: String, icon: ImageVector, accent: Color) {
     Card(
-        modifier = modifier,
+        modifier = Modifier.width(108.dp),
         shape = RoundedCornerShape(19.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xCC0D192B)),
         border = BorderStroke(1.dp, Border),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 14.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 13.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Surface(
-                modifier = Modifier.size(38.dp),
-                shape = RoundedCornerShape(13.dp),
-                color = accent.copy(alpha = 0.12f),
-            ) {
+            Surface(modifier = Modifier.size(38.dp), shape = RoundedCornerShape(13.dp), color = accent.copy(alpha = 0.12f)) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(20.dp))
                 }
             }
             Spacer(Modifier.height(8.dp))
-            Text(title, color = TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text(title, color = TextPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             Text(subtitle, color = TextTertiary, fontSize = 8.sp, maxLines = 1)
         }
     }
 }
 
 @Composable
-private fun MetricCard(
-    title: String,
-    value: String,
-    unit: String,
-    icon: ImageVector,
-    accent: Color,
-    modifier: Modifier = Modifier,
-) {
+private fun MetricCard(title: String, value: String, unit: String, icon: ImageVector, accent: Color) {
     Card(
-        modifier = modifier,
+        modifier = Modifier.width(108.dp),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xB80D192B)),
         border = BorderStroke(1.dp, Color(0xFF172A41)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
-        Column(Modifier.padding(12.dp)) {
+        Column(Modifier.padding(11.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(15.dp))
-                Text(title, color = TextSecondary, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 5.dp))
+                Spacer(Modifier.width(5.dp))
+                Text(title, color = TextSecondary, fontSize = 9.sp)
             }
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.Bottom) {
                 Text(value, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
-                Text(unit, color = TextTertiary, fontSize = 8.sp, modifier = Modifier.padding(start = 3.dp, bottom = 2.dp))
+                Spacer(Modifier.width(3.dp))
+                Text(unit, color = TextTertiary, fontSize = 8.sp)
             }
         }
     }
@@ -555,31 +456,21 @@ private fun SecurityCard() {
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(15.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Surface(
-                modifier = Modifier.size(44.dp),
-                shape = RoundedCornerShape(14.dp),
-                color = Mint.copy(alpha = 0.12f),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.Security, contentDescription = null, tint = Mint)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(modifier = Modifier.size(44.dp), shape = RoundedCornerShape(14.dp), color = Mint.copy(alpha = 0.12f)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Security, contentDescription = null, tint = Mint)
+                    }
                 }
-            }
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 12.dp)
-            ) {
-                Text("حریم خصوصی", color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Text(
-                    "اطلاعات اتصال و کلیدها باید فقط در فضای امن دستگاه نگهداری شوند.",
-                    color = TextSecondary,
-                    fontSize = 9.sp,
-                )
+                Spacer(Modifier.width(11.dp))
+                Column(modifier = Modifier.width(225.dp)) {
+                    Text("حریم خصوصی", color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text("کلیدها و اطلاعات حساس فقط باید در فضای امن دستگاه نگهداری شوند.", color = TextSecondary, fontSize = 9.sp)
+                }
             }
             Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = Mint, modifier = Modifier.size(20.dp))
         }
@@ -587,21 +478,13 @@ private fun SecurityCard() {
 }
 
 @Composable
-private fun EmptySection(
-    title: String,
-    subtitle: String,
-    icon: ImageVector,
-    actionText: String,
-) {
+private fun EmptySection(title: String, subtitle: String, icon: ImageVector, actionText: String) {
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 20.dp, vertical = 8.dp)
+        modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 8.dp)
     ) {
         Text(title, color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
         Text(subtitle, color = TextSecondary, fontSize = 11.sp)
         Spacer(Modifier.height(22.dp))
-
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(28.dp),
@@ -610,23 +493,21 @@ private fun EmptySection(
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 38.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 38.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Surface(
-                    modifier = Modifier.size(70.dp),
-                    shape = RoundedCornerShape(24.dp),
-                    color = Color(0xFF10283B),
-                ) {
+                Surface(modifier = Modifier.size(70.dp), shape = RoundedCornerShape(24.dp), color = Color(0xFF10283B)) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(icon, contentDescription = null, tint = NeonBlue, modifier = Modifier.size(34.dp))
                     }
                 }
                 Spacer(Modifier.height(16.dp))
                 Text("هنوز چیزی اضافه نشده", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                Text(actionText, color = NeonBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                Surface(shape = RoundedCornerShape(50), color = NeonBlue.copy(alpha = 0.12f)) {
+                    Text(actionText, color = NeonBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                }
             }
         }
     }
@@ -644,80 +525,43 @@ private fun SettingsScreen() {
         Text("تنظیمات", color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
         Text("کنترل شبکه، امنیت و رفتار اتصال", color = TextSecondary, fontSize = 11.sp)
         Spacer(Modifier.height(20.dp))
-
-        SettingsGroup(
-            title = "شبکه",
-            rows = listOf(
-                SettingItem("Split Tunneling", "انتخاب برنامه‌های داخل یا خارج VPN", Icons.Rounded.Tune, NeonPurple),
-                SettingItem("DNS امن", "مدیریت DNS و حریم خصوصی درخواست‌ها", Icons.Rounded.Security, Mint),
-            )
-        )
-        Spacer(Modifier.height(14.dp))
-        SettingsGroup(
-            title = "اتصال",
-            rows = listOf(
-                SettingItem("اتصال خودکار", "مدیریت اتصال مجدد و تغییر شبکه", Icons.Rounded.CloudSync, NeonBlue),
-                SettingItem("تست سرعت", "اندازه‌گیری کیفیت سرورها پس از اتصال", Icons.Rounded.Speed, Mint),
-            )
-        )
+        SettingRow("Split Tunneling", "انتخاب برنامه‌های داخل یا خارج VPN", Icons.Rounded.Tune, NeonPurple)
+        Spacer(Modifier.height(10.dp))
+        SettingRow("DNS امن", "تنظیمات DNS و حریم خصوصی", Icons.Rounded.Security, Mint)
+        Spacer(Modifier.height(10.dp))
+        SettingRow("اتصال خودکار", "اتصال مجدد پس از تغییر شبکه", Icons.Rounded.CloudSync, NeonBlue)
+        Spacer(Modifier.height(10.dp))
+        SettingRow("تست سرورها", "بررسی کیفیت سرورها با داده واقعی", Icons.Rounded.Speed, Mint)
     }
 }
 
-private data class SettingItem(
-    val title: String,
-    val subtitle: String,
-    val icon: ImageVector,
-    val accent: Color,
-)
-
 @Composable
-private fun SettingsGroup(title: String, rows: List<SettingItem>) {
-    Text(title, color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-    Spacer(Modifier.height(8.dp))
+private fun SettingRow(title: String, subtitle: String, icon: ImageVector, accent: Color) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = PanelStrong),
         border = BorderStroke(1.dp, Border),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
-        Column {
-            rows.forEachIndexed { index, item ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(15.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Surface(
-                        modifier = Modifier.size(40.dp),
-                        shape = RoundedCornerShape(13.dp),
-                        color = item.accent.copy(alpha = 0.12f),
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(item.icon, contentDescription = null, tint = item.accent, modifier = Modifier.size(20.dp))
-                        }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(15.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(modifier = Modifier.size(42.dp), shape = RoundedCornerShape(14.dp), color = accent.copy(alpha = 0.12f)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(21.dp))
                     }
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 11.dp)
-                    ) {
-                        Text(item.title, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        Text(item.subtitle, color = TextTertiary, fontSize = 9.sp)
-                    }
-                    Icon(Icons.Rounded.KeyboardArrowLeft, contentDescription = null, tint = TextTertiary)
                 }
-                if (index != rows.lastIndex) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp)
-                            .height(1.dp)
-                            .background(Color(0xFF17283C))
-                    )
+                Spacer(Modifier.width(11.dp))
+                Column(modifier = Modifier.width(235.dp)) {
+                    Text(title, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(subtitle, color = TextTertiary, fontSize = 9.sp)
                 }
             }
+            Icon(Icons.Rounded.KeyboardArrowLeft, contentDescription = null, tint = TextTertiary)
         }
     }
 }
