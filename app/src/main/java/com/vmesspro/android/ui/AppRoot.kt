@@ -1,7 +1,11 @@
 package com.vmesspro.android.ui
 
+import android.net.VpnService
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -44,6 +48,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.CloudSync
 import androidx.compose.material.icons.rounded.ContentPaste
@@ -103,8 +109,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
@@ -112,25 +118,27 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.vmesspro.android.core.ConnectionState
 import com.vmesspro.android.data.local.NodeEntity
 import com.vmesspro.android.data.local.SubscriptionEntity
 import com.vmesspro.android.data.preferences.SplitTunnelMode
 import com.vmesspro.android.data.preferences.VpnPreferences
 import kotlinx.coroutines.launch
 
-private val Background = Color(0xFF040812)
-private val BackgroundLift = Color(0xFF071426)
-private val Panel = Color(0xE80A1425)
-private val PanelStrong = Color(0xFF0D1A2D)
-private val Border = Color(0xFF1A3653)
-private val BorderBright = Color(0xFF275979)
-private val NeonBlue = Color(0xFF39D7FF)
-private val NeonPurple = Color(0xFFA88BFF)
-private val Mint = Color(0xFF4BE7B0)
-private val Danger = Color(0xFFFF6F88)
-private val TextPrimary = Color(0xFFF6F9FF)
-private val TextSecondary = Color(0xFFA7B5CA)
-private val TextTertiary = Color(0xFF71829C)
+private val Ink = Color(0xFF020610)
+private val DeepNavy = Color(0xFF06101E)
+private val Glass = Color(0xDE0A1628)
+private val GlassStrong = Color(0xFF0D1C31)
+private val Stroke = Color(0xFF1D3957)
+private val StrokeBright = Color(0xFF2D6888)
+private val Cyan = Color(0xFF39DAFF)
+private val Purple = Color(0xFFA98CFF)
+private val Mint = Color(0xFF4DE7B0)
+private val Amber = Color(0xFFFFC86B)
+private val Rose = Color(0xFFFF728A)
+private val White = Color(0xFFF7FAFF)
+private val Muted = Color(0xFFA9B8CE)
+private val Dim = Color(0xFF71849F)
 
 private enum class AppTab(val title: String, val icon: ImageVector) {
     Home("خانه", Icons.Rounded.Home),
@@ -139,15 +147,13 @@ private enum class AppTab(val title: String, val icon: ImageVector) {
     Settings("تنظیمات", Icons.Rounded.Settings),
 }
 
-private enum class OverlayRoute {
-    Import,
-    SplitTunnel,
-}
+private enum class OverlayRoute { Import, SplitTunnel }
 
 @Composable
 fun AppRoot(viewModel: AppViewModel = viewModel()) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
-    var overlayRoute by rememberSaveable { mutableStateOf<OverlayRoute?>(null) }
+    var overlay by rememberSaveable { mutableStateOf<OverlayRoute?>(null) }
+
     val nodes by viewModel.nodes.collectAsStateWithLifecycle()
     val subscriptions by viewModel.subscriptions.collectAsStateWithLifecycle()
     val selectedNode by viewModel.selectedNode.collectAsStateWithLifecycle()
@@ -155,67 +161,96 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
     val preferences by viewModel.preferences.collectAsStateWithLifecycle()
     val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
     val appsLoading by viewModel.appsLoading.collectAsStateWithLifecycle()
-    val snackbarHostState = remember { SnackbarHostState() }
+    val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
+
+    val context = LocalContext.current
+    val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(Unit) {
-        viewModel.events.collect { snackbarHostState.showSnackbar(it) }
+    val vpnPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (VpnService.prepare(context) == null) {
+            viewModel.connectSelected()
+        } else {
+            scope.launch { snackbar.showSnackbar("مجوز ساخت VPN صادر نشد") }
+        }
     }
 
-    BackHandler(enabled = overlayRoute != null) {
-        overlayRoute = null
+    LaunchedEffect(Unit) {
+        viewModel.events.collect { snackbar.showSnackbar(it) }
+    }
+
+    BackHandler(enabled = overlay != null) { overlay = null }
+
+    fun powerAction() {
+        when (connectionState) {
+            is ConnectionState.Connected,
+            ConnectionState.Preparing,
+            ConnectionState.Connecting,
+            ConnectionState.Verifying,
+            ConnectionState.Reconnecting -> viewModel.disconnect()
+            else -> {
+                if (selectedNode == null) {
+                    selectedTab = AppTab.Servers.ordinal
+                    scope.launch { snackbar.showSnackbar("ابتدا یک سرور انتخاب کنید") }
+                } else {
+                    val permissionIntent = VpnService.prepare(context)
+                    if (permissionIntent == null) viewModel.connectSelected()
+                    else vpnPermissionLauncher.launch(permissionIntent)
+                }
+            }
+        }
     }
 
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
         Box(
-            modifier = Modifier
+            Modifier
                 .fillMaxSize()
                 .background(
                     Brush.linearGradient(
-                        colors = listOf(Background, BackgroundLift, Background),
+                        listOf(Ink, DeepNavy, Color(0xFF071426), Ink),
                         start = Offset.Zero,
-                        end = Offset(1100f, 1900f),
+                        end = Offset(1200f, 2200f),
                     )
                 )
         ) {
-            DecorativeGlow()
+            AmbientGlows(connectionState)
             Scaffold(
                 modifier = Modifier.fillMaxSize(),
                 containerColor = Color.Transparent,
-                contentColor = TextPrimary,
-                snackbarHost = { SnackbarHost(snackbarHostState) },
+                snackbarHost = { SnackbarHost(snackbar) },
                 bottomBar = {
-                    if (overlayRoute == null) {
-                        PremiumBottomBar(selectedTab) {
-                            selectedTab = it
-                        }
+                    if (overlay == null) {
+                        PremiumBottomBar(selectedTab) { selectedTab = it }
                     }
                 },
             ) { innerPadding ->
                 Column(
-                    modifier = Modifier
+                    Modifier
                         .fillMaxSize()
                         .padding(innerPadding)
                         .statusBarsPadding()
                 ) {
-                    AppHeader(
-                        overlayRoute = overlayRoute,
-                        onBack = { overlayRoute = null },
+                    PremiumHeader(
+                        state = connectionState,
+                        overlay = overlay,
+                        onBack = { overlay = null },
                     )
                     AnimatedContent(
-                        targetState = overlayRoute?.name ?: "tab-$selectedTab",
+                        targetState = overlay?.name ?: "tab-$selectedTab",
                         transitionSpec = {
-                            (fadeIn(tween(220)) + slideInHorizontally(tween(260)) { it / 8 })
-                                .togetherWith(fadeOut(tween(160)) + slideOutHorizontally(tween(220)) { -it / 10 })
+                            (fadeIn(tween(220)) + slideInHorizontally(tween(260)) { it / 9 })
+                                .togetherWith(fadeOut(tween(150)) + slideOutHorizontally(tween(220)) { -it / 10 })
                         },
-                        label = "screen-transition",
+                        label = "premium-screen",
                         modifier = Modifier.fillMaxSize(),
                     ) {
-                        when (overlayRoute) {
+                        when (overlay) {
                             OverlayRoute.Import -> ImportScreen(
                                 onImport = viewModel::importText,
                                 onDone = {
-                                    overlayRoute = null
+                                    overlay = null
                                     selectedTab = AppTab.Servers.ordinal
                                 },
                             )
@@ -229,33 +264,27 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                             )
                             null -> when (AppTab.entries[selectedTab]) {
                                 AppTab.Home -> HomeScreen(
+                                    state = connectionState,
                                     selectedNode = selectedNode,
                                     nodeCount = nodes.size,
                                     subscriptionCount = subscriptions.size,
                                     splitCount = selectedPackageCount(preferences),
-                                    onServerClick = { selectedTab = AppTab.Servers.ordinal },
-                                    onImportClick = { overlayRoute = OverlayRoute.Import },
-                                    onSubscriptionClick = { selectedTab = AppTab.Subscriptions.ordinal },
-                                    onSplitClick = { overlayRoute = OverlayRoute.SplitTunnel },
-                                    onPowerClick = {
-                                        if (selectedNode == null) {
-                                            selectedTab = AppTab.Servers.ordinal
-                                            scope.launch { snackbarHostState.showSnackbar("ابتدا یک سرور انتخاب کنید") }
-                                        } else {
-                                            scope.launch {
-                                                snackbarHostState.showSnackbar("سرور آماده است؛ اتصال واقعی Core در مرحله بعد فعال می‌شود")
-                                            }
-                                        }
-                                    },
+                                    onPower = ::powerAction,
+                                    onServer = { selectedTab = AppTab.Servers.ordinal },
+                                    onImport = { overlay = OverlayRoute.Import },
+                                    onSubscriptions = { selectedTab = AppTab.Subscriptions.ordinal },
+                                    onSplit = { overlay = OverlayRoute.SplitTunnel },
+                                    onProbe = selectedNode?.let { { viewModel.probeNode(it.stableId) } },
                                 )
                                 AppTab.Servers -> ServersScreen(
                                     nodes = nodes,
                                     selectedNodeId = selectedNode?.stableId,
-                                    favoriteIds = favorites,
+                                    favorites = favorites,
                                     onSelect = viewModel::selectNode,
                                     onFavorite = viewModel::toggleFavorite,
                                     onDelete = viewModel::deleteNode,
-                                    onAdd = { overlayRoute = OverlayRoute.Import },
+                                    onProbe = viewModel::probeNode,
+                                    onAdd = { overlay = OverlayRoute.Import },
                                 )
                                 AppTab.Subscriptions -> SubscriptionsScreen(
                                     subscriptions = subscriptions,
@@ -267,7 +296,7 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                                     preferences = preferences,
                                     onAutoReconnect = viewModel::setAutoReconnect,
                                     onSaveDns = viewModel::setDns,
-                                    onSplit = { overlayRoute = OverlayRoute.SplitTunnel },
+                                    onSplit = { overlay = OverlayRoute.SplitTunnel },
                                 )
                             }
                         }
@@ -279,50 +308,133 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
 }
 
 @Composable
-private fun DecorativeGlow() {
-    val transition = rememberInfiniteTransition(label = "glow")
-    val alpha by transition.animateFloat(
-        initialValue = 0.55f,
-        targetValue = 0.9f,
-        animationSpec = infiniteRepeatable(tween(3200), RepeatMode.Reverse),
-        label = "glow-alpha",
+private fun AmbientGlows(state: ConnectionState) {
+    val transition = rememberInfiniteTransition(label = "ambient")
+    val drift by transition.animateFloat(
+        initialValue = 0.45f,
+        targetValue = 0.85f,
+        animationSpec = infiniteRepeatable(tween(3600), RepeatMode.Reverse),
+        label = "ambient-alpha",
+    )
+    val active = state is ConnectionState.Connected
+    Box(
+        Modifier
+            .size(390.dp)
+            .graphicsLayer(alpha = drift)
+            .background(
+                Brush.radialGradient(
+                    listOf((if (active) Mint else Cyan).copy(alpha = 0.16f), Color.Transparent)
+                ),
+                CircleShape,
+            )
     )
     Box(
-        modifier = Modifier
-            .size(330.dp)
-            .graphicsLayer(alpha = alpha)
+        Modifier
+            .fillMaxSize()
             .background(
-                Brush.radialGradient(listOf(Color(0x2636D9FF), Color.Transparent)),
-                CircleShape,
+                Brush.radialGradient(
+                    listOf(Purple.copy(alpha = 0.09f), Color.Transparent),
+                    center = Offset(900f, 1550f),
+                    radius = 850f,
+                )
             )
     )
 }
 
 @Composable
-private fun PremiumBottomBar(selectedTab: Int, onSelect: (Int) -> Unit) {
+private fun PremiumHeader(state: ConnectionState, overlay: OverlayRoute?, onBack: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (overlay != null) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.Rounded.ArrowBack, "بازگشت", tint = White)
+                }
+            }
+            Surface(
+                modifier = Modifier.size(46.dp),
+                shape = RoundedCornerShape(15.dp),
+                color = Color(0xFF0D2A3D),
+                border = BorderStroke(1.dp, Cyan.copy(alpha = 0.42f)),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.Security, null, tint = Cyan, modifier = Modifier.size(25.dp))
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            Column {
+                Text(
+                    when (overlay) {
+                        OverlayRoute.Import -> "ورود کانفیگ"
+                        OverlayRoute.SplitTunnel -> "Split Tunneling"
+                        null -> "VMess Pro"
+                    },
+                    color = White,
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                )
+                Text(
+                    when (overlay) {
+                        OverlayRoute.Import -> "VMess • VLESS • Reality • Trojan"
+                        OverlayRoute.SplitTunnel -> "کنترل مسیر VPN برای هر برنامه"
+                        null -> "sing-box core • اتصال واقعی Android VPN"
+                    },
+                    color = Muted,
+                    fontSize = 9.sp,
+                )
+            }
+        }
+        if (overlay == null) ConnectionBadge(state)
+    }
+}
+
+@Composable
+private fun ConnectionBadge(state: ConnectionState) {
+    val (label, color) = stateVisual(state)
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = color.copy(alpha = 0.10f),
+        border = BorderStroke(1.dp, color.copy(alpha = 0.42f)),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Box(Modifier.size(7.dp).background(color, CircleShape))
+            Text(label, color = color, fontSize = 8.sp, fontWeight = FontWeight.ExtraBold)
+        }
+    }
+}
+
+@Composable
+private fun PremiumBottomBar(selected: Int, onSelect: (Int) -> Unit) {
     NavigationBar(
         modifier = Modifier.navigationBarsPadding(),
-        containerColor = Color(0xF40A1221),
+        containerColor = Color(0xF207101D),
         tonalElevation = 0.dp,
     ) {
         AppTab.entries.forEachIndexed { index, tab ->
             NavigationBarItem(
-                selected = selectedTab == index,
+                selected = selected == index,
                 onClick = { onSelect(index) },
-                icon = { Icon(tab.icon, contentDescription = tab.title, modifier = Modifier.size(22.dp)) },
+                icon = { Icon(tab.icon, tab.title, modifier = Modifier.size(21.dp)) },
                 label = {
                     Text(
                         tab.title,
-                        fontSize = 10.sp,
-                        fontWeight = if (selectedTab == index) FontWeight.ExtraBold else FontWeight.Medium,
+                        fontSize = 9.sp,
+                        fontWeight = if (selected == index) FontWeight.ExtraBold else FontWeight.Medium,
                     )
                 },
                 colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = NeonBlue,
-                    selectedTextColor = NeonBlue,
-                    indicatorColor = Color(0xFF102B40),
-                    unselectedIconColor = TextTertiary,
-                    unselectedTextColor = TextTertiary,
+                    selectedIconColor = Cyan,
+                    selectedTextColor = Cyan,
+                    indicatorColor = Color(0xFF0D2C42),
+                    unselectedIconColor = Dim,
+                    unselectedTextColor = Dim,
                 ),
             )
         }
@@ -330,323 +442,284 @@ private fun PremiumBottomBar(selectedTab: Int, onSelect: (Int) -> Unit) {
 }
 
 @Composable
-private fun AppHeader(overlayRoute: OverlayRoute?, onBack: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 18.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (overlayRoute != null) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.Rounded.ArrowBack, contentDescription = "بازگشت", tint = TextPrimary)
-                }
-                Spacer(Modifier.width(4.dp))
-            }
-            Surface(
-                modifier = Modifier.size(44.dp),
-                shape = RoundedCornerShape(14.dp),
-                color = Color(0xFF10283B),
-                border = BorderStroke(1.dp, Color(0x6636D9FF)),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.Security, contentDescription = null, tint = NeonBlue, modifier = Modifier.size(24.dp))
-                }
-            }
-            Spacer(Modifier.width(10.dp))
-            Column {
-                Text(
-                    when (overlayRoute) {
-                        OverlayRoute.Import -> "ورود کانفیگ"
-                        OverlayRoute.SplitTunnel -> "Split Tunneling"
-                        null -> "VMess Pro"
-                    },
-                    color = TextPrimary,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                )
-                Text(
-                    when (overlayRoute) {
-                        OverlayRoute.Import -> "VMess / VLESS / Reality / Trojan"
-                        OverlayRoute.SplitTunnel -> "انتخاب دقیق برنامه‌های عبوری از VPN"
-                        null -> "شبکه امن، سریع و شخصی"
-                    },
-                    color = TextSecondary,
-                    fontSize = 9.sp,
-                )
-            }
-        }
-        if (overlayRoute == null) {
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = Color(0xFF0F2032),
-                border = BorderStroke(1.dp, Border),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Box(Modifier.size(7.dp).background(Mint, CircleShape))
-                    Text("READY", color = TextSecondary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun HomeScreen(
+    state: ConnectionState,
     selectedNode: NodeEntity?,
     nodeCount: Int,
     subscriptionCount: Int,
     splitCount: Int,
-    onServerClick: () -> Unit,
-    onImportClick: () -> Unit,
-    onSubscriptionClick: () -> Unit,
-    onSplitClick: () -> Unit,
-    onPowerClick: () -> Unit,
+    onPower: () -> Unit,
+    onServer: () -> Unit,
+    onImport: () -> Unit,
+    onSubscriptions: () -> Unit,
+    onSplit: () -> Unit,
+    onProbe: (() -> Unit)?,
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 18.dp)
-            .padding(bottom = 24.dp)
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(horizontal = 18.dp).padding(bottom = 24.dp)
     ) {
-        Spacer(Modifier.height(3.dp))
-        ConnectionHero(selectedNode, onPowerClick)
-        Spacer(Modifier.height(13.dp))
-        ServerSelector(selectedNode, onServerClick)
+        ConnectionHero(state, selectedNode, onPower)
+        Spacer(Modifier.height(12.dp))
+        ActiveServerCard(selectedNode, onServer, onProbe)
         Spacer(Modifier.height(17.dp))
-        SectionTitle("دسترسی سریع", "همه گزینه‌ها فعال هستند")
+        SectionHeader("دسترسی سریع", "عملکرد واقعی و ذخیره پایدار")
         Spacer(Modifier.height(9.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            item { QuickActionCard("کانفیگ", "$nodeCount سرور", Icons.Rounded.Add, NeonBlue, onImportClick) }
-            item { QuickActionCard("اشتراک", "$subscriptionCount لینک", Icons.Rounded.CloudSync, Mint, onSubscriptionClick) }
-            item { QuickActionCard("Split", "$splitCount برنامه", Icons.Rounded.Tune, NeonPurple, onSplitClick) }
+            item { QuickCard("کانفیگ", "$nodeCount سرور", Icons.Rounded.Add, Cyan, onImport) }
+            item { QuickCard("اشتراک", "$subscriptionCount لینک", Icons.Rounded.CloudSync, Mint, onSubscriptions) }
+            item { QuickCard("Split", "$splitCount برنامه", Icons.Rounded.Tune, Purple, onSplit) }
         }
         Spacer(Modifier.height(17.dp))
-        SectionTitle("وضعیت شبکه", "اطلاعات ساختگی نمایش داده نمی‌شود")
+        SectionHeader("وضعیت واقعی", "عدد نمایشی ساختگی نداریم")
         Spacer(Modifier.height(9.dp))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            item { MetricCard("Ping", "—", "ms", Icons.Rounded.Speed, NeonBlue) }
-            item { MetricCard("ترافیک", "—", "MB", Icons.Rounded.CloudSync, Mint) }
-            item { MetricCard("سرعت", "—", "Mb/s", Icons.Rounded.Speed, NeonPurple) }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            RealMetric(
+                Modifier.weight(1f),
+                "Ping TCP",
+                selectedNode?.lastLatencyMs?.let { "$it ms" } ?: "—",
+                Icons.Rounded.Speed,
+                Cyan,
+            )
+            RealMetric(
+                Modifier.weight(1f),
+                "Core",
+                "1.13.19",
+                Icons.Rounded.Bolt,
+                Purple,
+            )
+            RealMetric(
+                Modifier.weight(1f),
+                "Tunnel",
+                if (state is ConnectionState.Connected) "فعال" else "—",
+                Icons.Rounded.Lock,
+                Mint,
+            )
         }
-        Spacer(Modifier.height(17.dp))
-        SecurityCard(onSplitClick)
+        Spacer(Modifier.height(12.dp))
+        PrivacyCard(onSplit)
     }
 }
 
 @Composable
-private fun ConnectionHero(selectedNode: NodeEntity?, onPowerClick: () -> Unit) {
+private fun ConnectionHero(state: ConnectionState, node: NodeEntity?, onPower: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val pressScale by animateFloatAsState(if (pressed) 0.94f else 1f, tween(120), label = "power-press")
-    val pulse = rememberInfiniteTransition(label = "power-pulse")
-    val ringScale by pulse.animateFloat(
-        initialValue = 0.96f,
-        targetValue = 1.06f,
-        animationSpec = infiniteRepeatable(tween(1800), RepeatMode.Reverse),
-        label = "ring-scale",
+    val pressScale by animateFloatAsState(if (pressed) 0.93f else 1f, tween(110), label = "power-press")
+    val infinite = rememberInfiniteTransition(label = "power-ring")
+    val pulse by infinite.animateFloat(
+        0.96f,
+        if (state is ConnectionState.Connected) 1.10f else 1.045f,
+        infiniteRepeatable(tween(if (state is ConnectionState.Connected) 1300 else 2200), RepeatMode.Reverse),
+        label = "power-pulse",
     )
+    val (_, stateColor) = stateVisual(state)
+    val ringColor by animateColorAsState(stateColor, tween(250), label = "ring-color")
+    val busy = state == ConnectionState.Preparing || state == ConnectionState.Connecting || state == ConnectionState.Verifying
+
     Card(
         modifier = Modifier.fillMaxWidth().animateContentSize(),
         shape = RoundedCornerShape(30.dp),
-        colors = CardDefaults.cardColors(containerColor = Panel),
-        border = BorderStroke(1.dp, Color(0xAA183650)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        colors = CardDefaults.cardColors(containerColor = Glass),
+        border = BorderStroke(1.dp, ringColor.copy(alpha = 0.30f)),
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Brush.linearGradient(listOf(Color(0x2236D9FF), Color.Transparent, Color(0x1AA98BFF))))
-                .padding(horizontal = 21.dp, vertical = 21.dp),
+            Modifier.fillMaxWidth()
+                .background(
+                    Brush.linearGradient(
+                        listOf(ringColor.copy(alpha = 0.13f), Color.Transparent, Purple.copy(alpha = 0.07f))
+                    )
+                )
+                .padding(horizontal = 20.dp, vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column {
-                    Text("اتصال امن", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("تونل امن", color = White, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold)
                     Text(
-                        selectedNode?.let { "${it.protocol} • ${it.host}:${it.port}" } ?: "یک سرور انتخاب کنید",
-                        color = TextSecondary,
-                        fontSize = 9.sp,
+                        node?.let { "${it.protocol} • ${it.host}:${it.port}" } ?: "یک سرور انتخاب کنید",
+                        color = Muted,
+                        fontSize = 8.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Surface(shape = RoundedCornerShape(50), color = Color(0xFF101D30), border = BorderStroke(1.dp, Border)) {
-                    Text(
-                        if (selectedNode == null) "NO SERVER" else "READY",
-                        color = if (selectedNode == null) TextTertiary else Mint,
-                        fontSize = 8.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    )
-                }
+                ConnectionBadge(state)
             }
-            Spacer(Modifier.height(18.dp))
-            Box(contentAlignment = Alignment.Center, modifier = Modifier.height(158.dp)) {
-                Box(Modifier.size(154.dp).scale(ringScale).border(1.dp, Color(0x2F36D9FF), CircleShape))
-                Box(Modifier.size(130.dp).border(1.dp, Color(0x5A36D9FF), CircleShape))
+            Spacer(Modifier.height(16.dp))
+            Box(Modifier.height(162.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(158.dp).scale(pulse).border(1.dp, ringColor.copy(alpha = 0.24f), CircleShape))
+                Box(Modifier.size(134.dp).border(1.dp, ringColor.copy(alpha = 0.48f), CircleShape))
                 Box(
-                    modifier = Modifier
-                        .size(104.dp)
-                        .scale(pressScale)
-                        .clip(CircleShape)
-                        .background(Brush.linearGradient(listOf(Color(0xFF2DCCF3), Color(0xFF7776FF))))
-                        .clickable(interactionSource = interaction, indication = null, onClick = onPowerClick),
+                    Modifier.size(108.dp).scale(pressScale).clip(CircleShape)
+                        .background(
+                            if (state is ConnectionState.Connected)
+                                Brush.linearGradient(listOf(Mint, Cyan))
+                            else Brush.linearGradient(listOf(Cyan, Purple))
+                        )
+                        .clickable(interactionSource = interaction, indication = null, onClick = onPower),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.Rounded.PowerSettingsNew, contentDescription = "اتصال", tint = Color(0xFF03131D), modifier = Modifier.size(46.dp))
+                    if (busy) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(42.dp),
+                            color = Ink,
+                            strokeWidth = 4.dp,
+                        )
+                    } else {
+                        Icon(
+                            Icons.Rounded.PowerSettingsNew,
+                            if (state is ConnectionState.Connected) "قطع اتصال" else "اتصال",
+                            tint = Ink,
+                            modifier = Modifier.size(46.dp),
+                        )
+                    }
                 }
             }
             Text(
-                if (selectedNode == null) "آماده انتخاب سرور" else selectedNode.name,
-                color = TextPrimary,
-                fontSize = 18.sp,
+                connectionTitle(state, node),
+                color = White,
+                fontSize = 17.sp,
                 fontWeight = FontWeight.ExtraBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                if (selectedNode == null) "با لمس دکمه به فهرست سرورها می‌روید" else "سرور انتخاب شده و برای Core آماده است",
-                color = TextSecondary,
-                fontSize = 10.sp,
-            )
+            Spacer(Modifier.height(3.dp))
+            Text(connectionSubtitle(state), color = Muted, fontSize = 9.sp)
+            if (state is ConnectionState.Error) {
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Rose.copy(alpha = 0.10f),
+                    border = BorderStroke(1.dp, Rose.copy(alpha = 0.30f)),
+                ) {
+                    Text(
+                        state.reason,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                        color = Rose,
+                        fontSize = 8.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun ServerSelector(selectedNode: NodeEntity?, onClick: () -> Unit) {
+private fun ActiveServerCard(node: NodeEntity?, onClick: () -> Unit, onProbe: (() -> Unit)?) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = PanelStrong),
-        border = BorderStroke(1.dp, Border),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        shape = RoundedCornerShape(21.dp),
+        colors = CardDefaults.cardColors(containerColor = GlassStrong),
+        border = BorderStroke(1.dp, Stroke),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            Modifier.fillMaxWidth().padding(13.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(modifier = Modifier.size(46.dp), shape = RoundedCornerShape(15.dp), color = Color(0xFF10283B)) {
-                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Dns, contentDescription = null, tint = NeonBlue) }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                Surface(Modifier.size(45.dp), RoundedCornerShape(14.dp), color = Cyan.copy(alpha = 0.10f)) {
+                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Dns, null, tint = Cyan) }
                 }
-                Spacer(Modifier.width(11.dp))
-                Column {
-                    Text("سرور فعال", color = TextTertiary, fontSize = 8.sp)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("سرور فعال", color = Dim, fontSize = 8.sp)
                     Text(
-                        selectedNode?.name ?: "سروری انتخاب نشده",
-                        color = TextPrimary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
+                        node?.name ?: "سروری انتخاب نشده",
+                        color = White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.ExtraBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        selectedNode?.let { "${it.protocol} • ${it.host}:${it.port}" } ?: "VMess / VLESS / Reality / Trojan",
-                        color = TextSecondary,
+                        node?.let { "${it.protocol} • ${it.host}:${it.port}" } ?: "VMess / VLESS / Reality / Trojan",
+                        color = Muted,
                         fontSize = 8.sp,
+                        maxLines = 1,
                     )
                 }
             }
-            Icon(Icons.Rounded.KeyboardArrowLeft, contentDescription = null, tint = TextSecondary)
+            if (node != null && onProbe != null) {
+                TextButton(onClick = onProbe) { Text("تست", color = Cyan, fontSize = 9.sp) }
+            }
+            Icon(Icons.Rounded.KeyboardArrowLeft, null, tint = Muted)
         }
     }
 }
 
 @Composable
-private fun SectionTitle(title: String, subtitle: String) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
-        Text(title, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold)
-        Text(subtitle, color = TextTertiary, fontSize = 8.sp)
-    }
-}
-
-@Composable
-private fun QuickActionCard(title: String, subtitle: String, icon: ImageVector, accent: Color, onClick: () -> Unit) {
+private fun QuickCard(title: String, subtitle: String, icon: ImageVector, accent: Color, onClick: () -> Unit) {
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.96f else 1f, tween(110), label = "quick-press")
+    val scale by animateFloatAsState(if (pressed) 0.95f else 1f, tween(100), label = "quick-scale")
     Card(
-        modifier = Modifier.width(116.dp).scale(scale).clickable(interactionSource = source, indication = null, onClick = onClick),
+        modifier = Modifier.width(116.dp).scale(scale)
+            .clickable(interactionSource = source, indication = null, onClick = onClick),
         shape = RoundedCornerShape(19.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xD20D192B)),
-        border = BorderStroke(1.dp, Border),
+        border = BorderStroke(1.dp, Stroke),
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 13.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Surface(modifier = Modifier.size(38.dp), shape = RoundedCornerShape(13.dp), color = accent.copy(alpha = 0.13f)) {
-                Box(contentAlignment = Alignment.Center) { Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(20.dp)) }
+        Column(Modifier.fillMaxWidth().padding(11.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Surface(Modifier.size(39.dp), RoundedCornerShape(13.dp), color = accent.copy(alpha = 0.12f)) {
+                Box(contentAlignment = Alignment.Center) { Icon(icon, null, tint = accent, modifier = Modifier.size(20.dp)) }
             }
             Spacer(Modifier.height(7.dp))
-            Text(title, color = TextPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            Text(subtitle, color = TextTertiary, fontSize = 8.sp, maxLines = 1)
+            Text(title, color = White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text(subtitle, color = Dim, fontSize = 8.sp, maxLines = 1)
         }
     }
 }
 
 @Composable
-private fun MetricCard(title: String, value: String, unit: String, icon: ImageVector, accent: Color) {
+private fun RealMetric(modifier: Modifier, title: String, value: String, icon: ImageVector, accent: Color) {
     Card(
-        modifier = Modifier.width(116.dp),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xBF0D192B)),
-        border = BorderStroke(1.dp, Color(0xFF172B43)),
+        modifier = modifier,
+        shape = RoundedCornerShape(17.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xC50B1728)),
+        border = BorderStroke(1.dp, Color(0xFF162E48)),
     ) {
-        Column(Modifier.padding(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(15.dp))
-                Text(title, color = TextSecondary, fontSize = 9.sp)
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(value, color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
-                Spacer(Modifier.width(3.dp))
-                Text(unit, color = TextTertiary, fontSize = 7.sp)
-            }
+        Column(Modifier.padding(10.dp)) {
+            Icon(icon, null, tint = accent, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.height(7.dp))
+            Text(title, color = Dim, fontSize = 7.sp)
+            Text(value, color = White, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
         }
     }
 }
 
 @Composable
-private fun SecurityCard(onClick: () -> Unit) {
+private fun PrivacyCard(onClick: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xC70B1727)),
-        border = BorderStroke(1.dp, Border),
+        Modifier.fillMaxWidth().clickable(onClick = onClick),
+        RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xCA0B1728)),
+        border = BorderStroke(1.dp, Stroke),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
+        Row(Modifier.fillMaxWidth().padding(13.dp), Arrangement.SpaceBetween, Alignment.CenterVertically) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(modifier = Modifier.size(42.dp), shape = RoundedCornerShape(14.dp), color = Mint.copy(alpha = 0.1f)) {
-                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Lock, contentDescription = null, tint = Mint) }
+                Surface(Modifier.size(42.dp), RoundedCornerShape(14.dp), color = Mint.copy(alpha = 0.10f)) {
+                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Lock, null, tint = Mint) }
                 }
                 Spacer(Modifier.width(10.dp))
                 Column {
-                    Text("حریم خصوصی برنامه‌ها", color = TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    Text("Split Tunneling و استثنا کردن همراه‌بانک", color = TextSecondary, fontSize = 8.sp)
+                    Text("حریم خصوصی برنامه‌ها", color = White, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
+                    Text("Split Tunneling واقعی با Android VpnService", color = Muted, fontSize = 8.sp)
                 }
             }
-            Icon(Icons.Rounded.KeyboardArrowLeft, contentDescription = null, tint = TextSecondary)
+            Icon(Icons.Rounded.KeyboardArrowLeft, null, tint = Muted)
         }
+    }
+}
+
+@Composable
+private fun SectionHeader(title: String, subtitle: String) {
+    Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.Bottom) {
+        Text(title, color = White, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+        Text(subtitle, color = Dim, fontSize = 7.sp)
     }
 }
 
@@ -654,10 +727,11 @@ private fun SecurityCard(onClick: () -> Unit) {
 private fun ServersScreen(
     nodes: List<NodeEntity>,
     selectedNodeId: String?,
-    favoriteIds: Set<String>,
+    favorites: Set<String>,
     onSelect: (String) -> Unit,
     onFavorite: (String) -> Unit,
     onDelete: (String) -> Unit,
+    onProbe: (String) -> Unit,
     onAdd: () -> Unit,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
@@ -667,49 +741,28 @@ private fun ServersScreen(
         }
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 18.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column {
-                Text("سرورها", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
-                Text("${nodes.size} کانفیگ ذخیره‌شده", color = TextTertiary, fontSize = 9.sp)
-            }
-            FilledTonalButton(onClick = onAdd) {
-                Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("افزودن")
-            }
-        }
+        ScreenTitle("سرورها", "${nodes.size} کانفیگ واقعی", onAdd)
         Spacer(Modifier.height(10.dp))
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
-            placeholder = { Text("جستجو در نام، آدرس یا پروتکل") },
-            shape = RoundedCornerShape(18.dp),
-        )
+        SearchField(query, { query = it }, "جستجو در سرورها")
         Spacer(Modifier.height(10.dp))
         if (filtered.isEmpty()) {
             EmptyState(
-                title = if (nodes.isEmpty()) "هنوز سروری ندارید" else "نتیجه‌ای پیدا نشد",
-                subtitle = if (nodes.isEmpty()) "کانفیگ VMess یا VLESS را اضافه کنید." else "عبارت جستجو را تغییر دهید.",
-                icon = Icons.Rounded.Dns,
-                action = if (nodes.isEmpty()) onAdd else null,
-                actionText = "افزودن کانفیگ",
+                if (nodes.isEmpty()) "هنوز سروری ندارید" else "نتیجه‌ای پیدا نشد",
+                if (nodes.isEmpty()) "کانفیگ VMess یا VLESS را اضافه کنید." else "عبارت جستجو را تغییر دهید.",
+                Icons.Rounded.Dns,
+                if (nodes.isEmpty()) onAdd else null,
             )
         } else {
-            LazyColumn(
-                contentPadding = PaddingValues(bottom = 22.dp),
-                verticalArrangement = Arrangement.spacedBy(9.dp),
-            ) {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 22.dp)) {
                 items(filtered, key = { it.stableId }) { node ->
                     ServerCard(
-                        node = node,
-                        selected = node.stableId == selectedNodeId,
-                        favorite = node.stableId in favoriteIds,
-                        onSelect = { onSelect(node.stableId) },
-                        onFavorite = { onFavorite(node.stableId) },
-                        onDelete = { onDelete(node.stableId) },
+                        node,
+                        node.stableId == selectedNodeId,
+                        node.stableId in favorites,
+                        { onSelect(node.stableId) },
+                        { onFavorite(node.stableId) },
+                        { onDelete(node.stableId) },
+                        { onProbe(node.stableId) },
                     )
                 }
             }
@@ -725,40 +778,37 @@ private fun ServerCard(
     onSelect: () -> Unit,
     onFavorite: () -> Unit,
     onDelete: () -> Unit,
+    onProbe: () -> Unit,
 ) {
-    val borderColor = if (selected) NeonBlue.copy(alpha = 0.75f) else Border
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onSelect).animateContentSize(),
-        shape = RoundedCornerShape(19.dp),
-        colors = CardDefaults.cardColors(containerColor = if (selected) Color(0xE6112437) else PanelStrong),
-        border = BorderStroke(1.dp, borderColor),
+        Modifier.fillMaxWidth().clickable(onClick = onSelect).animateContentSize(),
+        RoundedCornerShape(19.dp),
+        colors = CardDefaults.cardColors(containerColor = if (selected) Color(0xE511263A) else GlassStrong),
+        border = BorderStroke(1.dp, if (selected) Cyan.copy(alpha = 0.70f) else Stroke),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(modifier = Modifier.size(43.dp), shape = RoundedCornerShape(14.dp), color = Color(0xFF10283B)) {
+        Row(Modifier.fillMaxWidth().padding(11.dp), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Surface(Modifier.size(43.dp), RoundedCornerShape(14.dp), color = Cyan.copy(alpha = 0.10f)) {
                     Box(contentAlignment = Alignment.Center) {
-                        Icon(if (selected) Icons.Rounded.CheckCircle else Icons.Rounded.Dns, contentDescription = null, tint = if (selected) Mint else NeonBlue)
+                        Icon(if (selected) Icons.Rounded.CheckCircle else Icons.Rounded.Dns, null, tint = if (selected) Mint else Cyan)
                     }
                 }
-                Spacer(Modifier.width(10.dp))
-                Column(modifier = Modifier.width(180.dp)) {
-                    Text(node.name, color = TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("${node.protocol} • ${node.host}:${node.port}", color = TextSecondary, fontSize = 8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(if (selected) "سرور فعال" else "برای انتخاب لمس کنید", color = if (selected) Mint else TextTertiary, fontSize = 8.sp)
+                Spacer(Modifier.width(9.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(node.name, color = White, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${node.protocol} • ${node.host}:${node.port}", color = Muted, fontSize = 7.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        node.lastLatencyMs?.let { "$it ms" } ?: if (selected) "سرور انتخاب‌شده" else "تست نشده",
+                        color = node.lastLatencyMs?.let { Mint } ?: Dim,
+                        fontSize = 7.sp,
+                    )
                 }
             }
-            Row {
-                IconButton(onClick = onFavorite) {
-                    Icon(if (favorite) Icons.Rounded.Star else Icons.Rounded.StarBorder, contentDescription = "علاقه‌مندی", tint = if (favorite) NeonPurple else TextTertiary)
-                }
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Rounded.Delete, contentDescription = "حذف", tint = Danger)
-                }
+            TextButton(onClick = onProbe, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("تست", fontSize = 8.sp) }
+            IconButton(onClick = onFavorite) {
+                Icon(if (favorite) Icons.Rounded.Star else Icons.Rounded.StarBorder, "علاقه‌مندی", tint = if (favorite) Purple else Dim)
             }
+            IconButton(onClick = onDelete) { Icon(Icons.Rounded.Delete, "حذف", tint = Rose) }
         }
     }
 }
@@ -769,58 +819,51 @@ private fun ImportScreen(
     onDone: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
-    var value by rememberSaveable { mutableStateOf("") }
+    var text by rememberSaveable { mutableStateOf("") }
     var summary by rememberSaveable { mutableStateOf<String?>(null) }
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp).padding(bottom = 24.dp)
-    ) {
-        Text("ورود هوشمند کانفیگ", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
-        Text("یک یا چند لینک VMess / VLESS / Trojan یا لینک Subscription را وارد کنید.", color = TextSecondary, fontSize = 9.sp)
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp).padding(bottom = 24.dp)) {
+        Text("ورود هوشمند کانفیگ", color = White, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+        Text("چند لینک را هم‌زمان وارد کنید؛ موارد معتبر ذخیره می‌شوند.", color = Muted, fontSize = 8.sp)
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(
-            value = value,
-            onValueChange = { value = it; summary = null },
+            value = text,
+            onValueChange = { text = it; summary = null },
             modifier = Modifier.fillMaxWidth().height(220.dp),
             placeholder = { Text("vless://...\nvmess://...\nhttps://subscription...") },
             shape = RoundedCornerShape(20.dp),
         )
-        Spacer(Modifier.height(10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-            FilledTonalButton(
-                onClick = {
-                    clipboard.getText()?.text?.let { value = it }
-                    summary = null
-                }
-            ) {
-                Icon(Icons.Rounded.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.height(9.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilledTonalButton(onClick = {
+                clipboard.getText()?.text?.let { text = it }
+                summary = null
+            }) {
+                Icon(Icons.Rounded.ContentPaste, null, modifier = Modifier.size(17.dp))
                 Spacer(Modifier.width(5.dp))
                 Text("چسباندن")
             }
-            TextButton(onClick = { value = ""; summary = null }) { Text("پاک کردن") }
+            TextButton(onClick = { text = ""; summary = null }) { Text("پاک کردن") }
         }
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(13.dp))
         Button(
             onClick = {
-                if (value.isBlank()) {
-                    summary = "متنی برای پردازش وارد نشده است."
-                } else {
-                    val preview = onImport(value)
-                    summary = "${preview.validServerCount} سرور معتبر • ${preview.duplicateCount} تکراری • ${preview.invalidCount} نامعتبر • ${preview.subscriptionUrls.size} اشتراک"
+                if (text.isBlank()) summary = "متنی برای پردازش وارد نشده است."
+                else {
+                    val preview = onImport(text)
+                    summary = "${preview.validServerCount} معتبر • ${preview.duplicateCount} تکراری • ${preview.invalidCount} نامعتبر • ${preview.subscriptionUrls.size} اشتراک"
                 }
             },
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(17.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = NeonBlue, contentColor = Color(0xFF03131D)),
-        ) {
-            Text("بررسی و ذخیره", fontWeight = FontWeight.ExtraBold)
-        }
+            colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Ink),
+        ) { Text("بررسی و ذخیره", fontWeight = FontWeight.ExtraBold) }
         summary?.let {
-            Spacer(Modifier.height(12.dp))
-            Surface(shape = RoundedCornerShape(16.dp), color = Color(0xFF0E2132), border = BorderStroke(1.dp, BorderBright)) {
-                Text(it, modifier = Modifier.padding(13.dp), color = TextPrimary, fontSize = 10.sp)
+            Spacer(Modifier.height(11.dp))
+            Surface(RoundedCornerShape(16.dp), color = Color(0xFF0C2133), border = BorderStroke(1.dp, StrokeBright)) {
+                Text(it, Modifier.padding(12.dp), color = White, fontSize = 9.sp)
             }
-            Spacer(Modifier.height(10.dp))
-            if (it.startsWith("0 ").not()) {
+            if (!it.startsWith("0 معتبر")) {
+                Spacer(Modifier.height(9.dp))
                 FilledTonalButton(onClick = onDone, modifier = Modifier.fillMaxWidth()) { Text("مشاهده سرورها") }
             }
         }
@@ -836,73 +879,46 @@ private fun SubscriptionsScreen(
 ) {
     var showAdd by rememberSaveable { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().padding(horizontal = 18.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column {
-                Text("اشتراک‌ها", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
-                Text("دریافت و بروزرسانی واقعی Subscription", color = TextTertiary, fontSize = 9.sp)
-            }
-            FilledTonalButton(onClick = { showAdd = true }) {
-                Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(5.dp))
-                Text("افزودن")
-            }
-        }
+        ScreenTitle("اشتراک‌ها", "دریافت و Refresh واقعی", { showAdd = true })
         Spacer(Modifier.height(10.dp))
         if (subscriptions.isEmpty()) {
-            EmptyState("اشتراکی اضافه نشده", "لینک Subscription را اضافه کنید تا سرورها دریافت شوند.", Icons.Rounded.CloudSync, { showAdd = true }, "افزودن اشتراک")
+            EmptyState("اشتراکی اضافه نشده", "لینک Subscription را اضافه کنید.", Icons.Rounded.CloudSync, { showAdd = true })
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(9.dp), contentPadding = PaddingValues(bottom = 22.dp)) {
-                items(subscriptions, key = { it.id }) { subscription ->
-                    SubscriptionCard(subscription, { onRefresh(subscription.id) }, { onDelete(subscription.id) })
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 22.dp)) {
+                items(subscriptions, key = { it.id }) { sub ->
+                    Card(
+                        Modifier.fillMaxWidth(), RoundedCornerShape(19.dp),
+                        colors = CardDefaults.cardColors(containerColor = GlassStrong), border = BorderStroke(1.dp, Stroke)
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(11.dp), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+                            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                                Surface(Modifier.size(42.dp), RoundedCornerShape(13.dp), color = Mint.copy(alpha = 0.10f)) {
+                                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.CloudSync, null, tint = Mint) }
+                                }
+                                Spacer(Modifier.width(9.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(sub.name, color = White, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        sub.lastRefreshError?.let { "خطا: $it" }
+                                            ?: if (sub.lastRefreshAt == null) "هنوز بروزرسانی نشده" else "بروزرسانی موفق",
+                                        color = if (sub.lastRefreshError == null) Muted else Rose,
+                                        fontSize = 7.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                            IconButton(onClick = { onRefresh(sub.id) }) { Icon(Icons.Rounded.Refresh, "بروزرسانی", tint = Cyan) }
+                            IconButton(onClick = { onDelete(sub.id) }) { Icon(Icons.Rounded.Delete, "حذف", tint = Rose) }
+                        }
+                    }
                 }
             }
         }
     }
-    if (showAdd) {
-        AddSubscriptionDialog(
-            onDismiss = { showAdd = false },
-            onAdd = { name, url ->
-                onAdd(name, url)
-                showAdd = false
-            },
-        )
-    }
-}
-
-@Composable
-private fun SubscriptionCard(subscription: SubscriptionEntity, onRefresh: () -> Unit, onDelete: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(19.dp),
-        colors = CardDefaults.cardColors(containerColor = PanelStrong),
-        border = BorderStroke(1.dp, Border),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(modifier = Modifier.size(43.dp), shape = RoundedCornerShape(14.dp), color = Mint.copy(alpha = 0.1f)) {
-                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.CloudSync, contentDescription = null, tint = Mint) }
-                }
-                Spacer(Modifier.width(10.dp))
-                Column(modifier = Modifier.width(190.dp)) {
-                    Text(subscription.name, color = TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        subscription.lastRefreshError?.let { "خطا: $it" } ?: if (subscription.lastRefreshAt == null) "هنوز بروزرسانی نشده" else "آخرین بروزرسانی انجام شده",
-                        color = if (subscription.lastRefreshError == null) TextSecondary else Danger,
-                        fontSize = 8.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            Row {
-                IconButton(onClick = onRefresh) { Icon(Icons.Rounded.Refresh, contentDescription = "بروزرسانی", tint = NeonBlue) }
-                IconButton(onClick = onDelete) { Icon(Icons.Rounded.Delete, contentDescription = "حذف", tint = Danger) }
-            }
-        }
+    if (showAdd) AddSubscriptionDialog({ showAdd = false }) { name, url ->
+        onAdd(name, url)
+        showAdd = false
     }
 }
 
@@ -914,14 +930,12 @@ private fun AddSubscriptionDialog(onDismiss: () -> Unit, onAdd: (String, String)
         onDismissRequest = onDismiss,
         title = { Text("افزودن اشتراک") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("نام") }, singleLine = true)
-                OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("لینک Subscription") }, singleLine = true)
+            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                OutlinedTextField(name, { name = it }, label = { Text("نام") }, singleLine = true)
+                OutlinedTextField(url, { url = it }, label = { Text("لینک Subscription") }, singleLine = true)
             }
         },
-        confirmButton = {
-            Button(onClick = { onAdd(name, url) }, enabled = url.isNotBlank()) { Text("دریافت") }
-        },
+        confirmButton = { Button(onClick = { onAdd(name, url) }, enabled = url.isNotBlank()) { Text("دریافت") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف") } },
     )
 }
@@ -933,79 +947,62 @@ private fun SettingsScreen(
     onSaveDns: (String?) -> Unit,
     onSplit: () -> Unit,
 ) {
-    var dnsInput by rememberSaveable { mutableStateOf("") }
-    LaunchedEffect(preferences.customDns) { dnsInput = preferences.customDns.orEmpty() }
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp).padding(bottom = 24.dp)
-    ) {
-        Text("تنظیمات", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
-        Text("تنظیمات فعلی واقعاً در DataStore ذخیره می‌شوند.", color = TextTertiary, fontSize = 9.sp)
+    var dns by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(preferences.customDns) { dns = preferences.customDns.orEmpty() }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp).padding(bottom = 24.dp)) {
+        Text("تنظیمات", color = White, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+        Text("تنظیمات اتصال در DataStore ذخیره و در Core اعمال می‌شوند.", color = Dim, fontSize = 8.sp)
         Spacer(Modifier.height(12.dp))
-        SettingsToggleCard(
-            title = "اتصال مجدد خودکار",
-            subtitle = "پس از قطع شبکه، آماده تلاش مجدد باشد",
-            checked = preferences.autoReconnect,
-            onCheckedChange = onAutoReconnect,
+        SettingToggle(
+            "اتصال مجدد خودکار",
+            "زیرساخت حالت اتصال برای Reconnect آماده است",
+            preferences.autoReconnect,
+            onAutoReconnect,
         )
         Spacer(Modifier.height(9.dp))
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(19.dp),
-            colors = CardDefaults.cardColors(containerColor = PanelStrong),
-            border = BorderStroke(1.dp, Border),
-        ) {
+        Card(Modifier.fillMaxWidth(), RoundedCornerShape(19.dp), colors = CardDefaults.cardColors(containerColor = GlassStrong), border = BorderStroke(1.dp, Stroke)) {
             Column(Modifier.padding(13.dp)) {
-                Text("DNS سفارشی", color = TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                Text("مثال: 1.1.1.1 یا آدرس DoH در مرحله Core", color = TextSecondary, fontSize = 8.sp)
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = dnsInput,
-                    onValueChange = { dnsInput = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    placeholder = { Text("خالی = پیش‌فرض") },
-                    shape = RoundedCornerShape(15.dp),
-                )
-                Spacer(Modifier.height(8.dp))
-                FilledTonalButton(onClick = { onSaveDns(dnsInput.ifBlank { null }) }) { Text("ذخیره DNS") }
+                Text("DNS سفارشی", color = White, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
+                Text("IPv4 مثل 1.1.1.1 یا DoH مثل https://.../dns-query", color = Muted, fontSize = 7.sp)
+                Spacer(Modifier.height(7.dp))
+                OutlinedTextField(dns, { dns = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("خالی = DNS سیستم") }, shape = RoundedCornerShape(15.dp))
+                Spacer(Modifier.height(7.dp))
+                FilledTonalButton(onClick = { onSaveDns(dns.ifBlank { null }) }) { Text("ذخیره DNS") }
             }
         }
         Spacer(Modifier.height(9.dp))
-        Card(
-            modifier = Modifier.fillMaxWidth().clickable(onClick = onSplit),
-            shape = RoundedCornerShape(19.dp),
-            colors = CardDefaults.cardColors(containerColor = PanelStrong),
-            border = BorderStroke(1.dp, Border),
-        ) {
-            Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Card(Modifier.fillMaxWidth().clickable(onClick = onSplit), RoundedCornerShape(19.dp), colors = CardDefaults.cardColors(containerColor = GlassStrong), border = BorderStroke(1.dp, Stroke)) {
+            Row(Modifier.fillMaxWidth().padding(13.dp), Arrangement.SpaceBetween, Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.Tune, contentDescription = null, tint = NeonPurple)
-                    Spacer(Modifier.width(10.dp))
+                    Icon(Icons.Rounded.Tune, null, tint = Purple)
+                    Spacer(Modifier.width(9.dp))
                     Column {
-                        Text("Split Tunneling", color = TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        Text("${selectedPackageCount(preferences)} برنامه انتخاب شده", color = TextSecondary, fontSize = 8.sp)
+                        Text("Split Tunneling", color = White, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
+                        Text("${selectedPackageCount(preferences)} برنامه انتخاب‌شده", color = Muted, fontSize = 7.sp)
                     }
                 }
-                Icon(Icons.Rounded.KeyboardArrowLeft, contentDescription = null, tint = TextSecondary)
+                Icon(Icons.Rounded.KeyboardArrowLeft, null, tint = Muted)
+            }
+        }
+        Spacer(Modifier.height(9.dp))
+        Surface(RoundedCornerShape(17.dp), color = Cyan.copy(alpha = 0.07f), border = BorderStroke(1.dp, Cyan.copy(alpha = 0.22f))) {
+            Column(Modifier.padding(12.dp)) {
+                Text("Core Runtime", color = Cyan, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold)
+                Text("sing-box/libbox v1.13.19 • Android VpnService • isolated :vpn process", color = Muted, fontSize = 7.sp)
             }
         }
     }
 }
 
 @Composable
-private fun SettingsToggleCard(title: String, subtitle: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(19.dp),
-        colors = CardDefaults.cardColors(containerColor = PanelStrong),
-        border = BorderStroke(1.dp, Border),
-    ) {
-        Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Column(modifier = Modifier.width(250.dp)) {
-                Text(title, color = TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                Text(subtitle, color = TextSecondary, fontSize = 8.sp)
+private fun SettingToggle(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Card(Modifier.fillMaxWidth(), RoundedCornerShape(19.dp), colors = CardDefaults.cardColors(containerColor = GlassStrong), border = BorderStroke(1.dp, Stroke)) {
+        Row(Modifier.fillMaxWidth().padding(13.dp), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(title, color = White, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
+                Text(subtitle, color = Muted, fontSize = 7.sp)
             }
-            Switch(checked = checked, onCheckedChange = onCheckedChange)
+            Switch(checked, onChange)
         }
     }
 }
@@ -1029,10 +1026,10 @@ private fun SplitTunnelScreen(
         if (query.isBlank()) apps else apps.filter { it.label.contains(query, true) || it.packageName.contains(query, true) }
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 18.dp)) {
-        Text("انتخاب برنامه‌ها", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
-        Text("انتخاب‌ها در DataStore ذخیره می‌شوند و برای VpnService آماده‌اند.", color = TextTertiary, fontSize = 9.sp)
-        Spacer(Modifier.height(10.dp))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("انتخاب برنامه‌ها", color = White, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+        Text("این انتخاب‌ها مستقیماً به allowlist / denylist خود VpnService می‌روند.", color = Dim, fontSize = 8.sp)
+        Spacer(Modifier.height(9.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             item {
                 FilterChip(
                     selected = preferences.splitTunnelMode == SplitTunnelMode.EXCLUDE_SELECTED,
@@ -1048,25 +1045,34 @@ private fun SplitTunnelScreen(
                 )
             }
         }
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
-            placeholder = { Text("جستجوی برنامه") },
-            shape = RoundedCornerShape(17.dp),
-        )
-        Spacer(Modifier.height(8.dp))
-        if (loading) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = NeonBlue) }
-        } else if (filtered.isEmpty()) {
-            EmptyState("برنامه‌ای پیدا نشد", "اگر فهرست خالی است، دسترسی Package Visibility را بررسی کنید.", Icons.Rounded.Tune, null, null)
-        } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(7.dp), contentPadding = PaddingValues(bottom = 22.dp)) {
+        Spacer(Modifier.height(7.dp))
+        SearchField(query, { query = it }, "جستجوی برنامه")
+        Spacer(Modifier.height(7.dp))
+        when {
+            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Cyan) }
+            filtered.isEmpty() -> EmptyState("برنامه‌ای پیدا نشد", "فهرست برنامه‌های قابل مشاهده خالی است.", Icons.Rounded.Tune, null)
+            else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(7.dp), contentPadding = PaddingValues(bottom = 22.dp)) {
                 items(filtered, key = { it.packageName }) { app ->
-                    AppToggleRow(app, app.packageName in selected) { enabled -> onTogglePackage(app.packageName, enabled) }
+                    val enabled = app.packageName in selected
+                    Card(
+                        Modifier.fillMaxWidth(), RoundedCornerShape(17.dp),
+                        colors = CardDefaults.cardColors(containerColor = if (enabled) Color(0xE5112539) else Color(0xC90B1728)),
+                        border = BorderStroke(1.dp, if (enabled) Purple.copy(alpha = 0.55f) else Stroke),
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 8.dp), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+                            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                                Surface(Modifier.size(38.dp), RoundedCornerShape(12.dp), color = Purple.copy(alpha = 0.10f)) {
+                                    Box(contentAlignment = Alignment.Center) { Icon(if (enabled) Icons.Rounded.Check else Icons.Rounded.Security, null, tint = Purple, modifier = Modifier.size(18.dp)) }
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(app.label, color = White, fontSize = 9.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(app.packageName, color = Dim, fontSize = 6.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                            Switch(enabled, { onTogglePackage(app.packageName, it) })
+                        }
+                    }
                 }
             }
         }
@@ -1074,51 +1080,79 @@ private fun SplitTunnelScreen(
 }
 
 @Composable
-private fun AppToggleRow(app: InstalledAppInfo, selected: Boolean, onToggle: (Boolean) -> Unit) {
-    Card(
+private fun ScreenTitle(title: String, subtitle: String, onAdd: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+        Column {
+            Text(title, color = White, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+            Text(subtitle, color = Dim, fontSize = 8.sp)
+        }
+        FilledTonalButton(onClick = onAdd) {
+            Icon(Icons.Rounded.Add, null, modifier = Modifier.size(17.dp))
+            Spacer(Modifier.width(5.dp))
+            Text("افزودن")
+        }
+    }
+}
+
+@Composable
+private fun SearchField(value: String, onChange: (String) -> Unit, hint: String) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onChange,
         modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        leadingIcon = { Icon(Icons.Rounded.Search, null) },
+        placeholder = { Text(hint) },
         shape = RoundedCornerShape(17.dp),
-        colors = CardDefaults.cardColors(containerColor = if (selected) Color(0xE6112437) else Color(0xC90C1829)),
-        border = BorderStroke(1.dp, if (selected) NeonPurple.copy(alpha = 0.55f) else Border),
-    ) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(modifier = Modifier.size(39.dp), shape = RoundedCornerShape(12.dp), color = NeonPurple.copy(alpha = 0.1f)) {
-                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Security, contentDescription = null, tint = NeonPurple, modifier = Modifier.size(19.dp)) }
-                }
-                Spacer(Modifier.width(9.dp))
-                Column(modifier = Modifier.width(245.dp)) {
-                    Text(app.label, color = TextPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(app.packageName, color = TextTertiary, fontSize = 7.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
+    )
+}
+
+@Composable
+private fun EmptyState(title: String, subtitle: String, icon: ImageVector, action: (() -> Unit)?) {
+    Box(Modifier.fillMaxSize().padding(top = 28.dp), contentAlignment = Alignment.TopCenter) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Surface(Modifier.size(68.dp), RoundedCornerShape(23.dp), color = Color(0xFF0D2A3D)) {
+                Box(contentAlignment = Alignment.Center) { Icon(icon, null, tint = Cyan, modifier = Modifier.size(31.dp)) }
             }
-            Switch(checked = selected, onCheckedChange = onToggle)
+            Spacer(Modifier.height(11.dp))
+            Text(title, color = White, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold)
+            Text(subtitle, color = Muted, fontSize = 8.sp)
+            if (action != null) {
+                Spacer(Modifier.height(11.dp))
+                FilledTonalButton(onClick = action) { Text("افزودن") }
+            }
         }
     }
 }
 
-@Composable
-private fun EmptyState(
-    title: String,
-    subtitle: String,
-    icon: ImageVector,
-    action: (() -> Unit)?,
-    actionText: String?,
-) {
-    Box(Modifier.fillMaxSize().padding(top = 30.dp), contentAlignment = Alignment.TopCenter) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Surface(modifier = Modifier.size(70.dp), shape = RoundedCornerShape(24.dp), color = Color(0xFF10283B)) {
-                Box(contentAlignment = Alignment.Center) { Icon(icon, contentDescription = null, tint = NeonBlue, modifier = Modifier.size(32.dp)) }
-            }
-            Spacer(Modifier.height(12.dp))
-            Text(title, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
-            Text(subtitle, color = TextSecondary, fontSize = 9.sp)
-            if (action != null && actionText != null) {
-                Spacer(Modifier.height(12.dp))
-                FilledTonalButton(onClick = action) { Text(actionText) }
-            }
-        }
-    }
+private fun stateVisual(state: ConnectionState): Pair<String, Color> = when (state) {
+    ConnectionState.Disconnected -> "قطع", Dim
+    ConnectionState.Preparing -> "آماده‌سازی", Amber
+    ConnectionState.Connecting -> "اتصال", Cyan
+    ConnectionState.Verifying -> "بررسی", Purple
+    is ConnectionState.Connected -> "متصل", Mint
+    ConnectionState.Reconnecting -> "اتصال مجدد", Amber
+    is ConnectionState.Error -> "خطا", Rose
+}
+
+private fun connectionTitle(state: ConnectionState, node: NodeEntity?): String = when (state) {
+    is ConnectionState.Connected -> node?.name ?: "متصل"
+    ConnectionState.Preparing -> "در حال آماده‌سازی"
+    ConnectionState.Connecting -> "در حال ساخت تونل"
+    ConnectionState.Verifying -> "در حال بررسی مسیر VPN"
+    ConnectionState.Reconnecting -> "در حال اتصال مجدد"
+    is ConnectionState.Error -> "اتصال ناموفق"
+    ConnectionState.Disconnected -> node?.name ?: "آماده اتصال"
+}
+
+private fun connectionSubtitle(state: ConnectionState): String = when (state) {
+    is ConnectionState.Connected -> "ترافیک از تونل Android VPN عبور می‌کند"
+    ConnectionState.Preparing -> "مجوزها و تنظیمات Core در حال آماده‌سازی است"
+    ConnectionState.Connecting -> "libbox در حال ایجاد TUN و مسیرهای شبکه است"
+    ConnectionState.Verifying -> "دسترسی اینترنت از خود تونل در حال تست است"
+    ConnectionState.Reconnecting -> "در حال بازیابی اتصال"
+    is ConnectionState.Error -> "برای تلاش دوباره دکمه اتصال را لمس کنید"
+    ConnectionState.Disconnected -> "برای اتصال دکمه مرکزی را لمس کنید"
 }
 
 private fun selectedPackageCount(preferences: VpnPreferences): Int = when (preferences.splitTunnelMode) {
