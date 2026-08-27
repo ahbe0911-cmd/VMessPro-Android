@@ -18,6 +18,7 @@ enum class SplitTunnelMode {
 }
 
 data class VpnPreferences(
+    val selectedNodeId: String? = null,
     val splitTunnelMode: SplitTunnelMode = SplitTunnelMode.EXCLUDE_SELECTED,
     val includedPackages: Set<String> = emptySet(),
     val excludedPackages: Set<String> = emptySet(),
@@ -29,6 +30,7 @@ data class VpnPreferences(
 
 class VpnPreferencesRepository(private val context: Context) {
     private object Keys {
+        val selectedNodeId = stringPreferencesKey("selected_node_id")
         val splitMode = stringPreferencesKey("split_mode")
         val includedPackages = stringSetPreferencesKey("included_packages")
         val excludedPackages = stringSetPreferencesKey("excluded_packages")
@@ -39,6 +41,12 @@ class VpnPreferencesRepository(private val context: Context) {
     }
 
     val preferences: Flow<VpnPreferences> = context.vpnSettingsDataStore.data.map(::mapPreferences)
+
+    suspend fun setSelectedNode(id: String?) {
+        context.vpnSettingsDataStore.edit { prefs ->
+            if (id.isNullOrBlank()) prefs.remove(Keys.selectedNodeId) else prefs[Keys.selectedNodeId] = id
+        }
+    }
 
     suspend fun setSplitTunnel(
         mode: SplitTunnelMode,
@@ -74,6 +82,7 @@ class VpnPreferencesRepository(private val context: Context) {
         }.getOrDefault(SplitTunnelMode.EXCLUDE_SELECTED)
 
         return VpnPreferences(
+            selectedNodeId = prefs[Keys.selectedNodeId],
             splitTunnelMode = mode,
             includedPackages = prefs[Keys.includedPackages].orEmpty(),
             excludedPackages = prefs[Keys.excludedPackages].orEmpty(),
