@@ -22,6 +22,9 @@ interface NodeDao {
     @Upsert
     suspend fun upsert(nodes: List<NodeEntity>)
 
+    @Query("DELETE FROM nodes WHERE stableId = :id")
+    suspend fun deleteById(id: String)
+
     @Query("DELETE FROM nodes WHERE subscriptionId = :subscriptionId AND stableId NOT IN (:keepIds)")
     suspend fun deleteMissingFromSubscription(subscriptionId: String, keepIds: List<String>)
 
