@@ -7,6 +7,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.room.withTransaction
+import com.vmesspro.android.core.AndroidCoreAdapter
+import com.vmesspro.android.core.ConnectionState
 import com.vmesspro.android.data.local.AppDatabase
 import com.vmesspro.android.data.local.FavoriteEntity
 import com.vmesspro.android.data.local.NodeEntity
@@ -47,6 +49,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     ).fallbackToDestructiveMigration().build()
     private val preferencesRepository = VpnPreferencesRepository(application)
     private val secureStore = SecureConfigStore()
+    private val coreAdapter = AndroidCoreAdapter(application)
+
+    val connectionState: StateFlow<ConnectionState> = coreAdapter.state
 
     val nodes: StateFlow<List<NodeEntity>> = database.nodeDao().observeAll().stateIn(
         viewModelScope,
@@ -81,6 +86,59 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val appsLoading: StateFlow<Boolean> = _appsLoading
 
     val events = MutableSharedFlow<String>(extraBufferCapacity = 12)
+
+    fun connectSelected() {
+        val id = selectedNode.value?.stableId
+        if (id == null) {
+            events.tryEmit("ابتدا یک سرور انتخاب کنید")
+            return
+        }
+        viewModelScope.launch {
+            runCatching { coreAdapter.connect(id) }
+                .onFailure { events.emit("شروع VPN ناموفق بود: ${it.message ?: "خطای Core"}") }
+        }
+    }
+
+    fun disconnect() {
+        viewModelScope.launch {
+            runCatching { coreAdapter.disconnect() }
+                .onFailure { events.emit("قطع VPN ناموفق بود") }
+        }
+    }
+
+    fun toggleConnection() {
+        when (connectionState.value) {
+            is ConnectionState.Connected,
+            ConnectionState.Preparing,
+            ConnectionState.Connecting,
+            ConnectionState.Verifying,
+            ConnectionState.Reconnecting -> disconnect()
+            else -> connectSelected()
+        }
+    }
+
+    fun probeNode(id: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val node = database.nodeDao().getById(id) ?: return@launch
+            val result = coreAdapter.probe(id)
+            val now = System.currentTimeMillis()
+            database.nodeDao().upsert(
+                listOf(
+                    node.copy(
+                        lastLatencyMs = result.tcpLatencyMs,
+                        lastProbeSucceeded = result.success,
+                        lastTestedAt = now,
+                        consecutiveFailures = if (result.success) 0 else node.consecutiveFailures + 1,
+                        updatedAt = now,
+                    )
+                )
+            )
+            events.emit(
+                if (result.success) "پینگ TCP: ${result.tcpLatencyMs ?: 0} ms"
+                else "تست سرور ناموفق بود"
+            )
+        }
+    }
 
     fun selectNode(id: String) {
         viewModelScope.launch {
@@ -186,7 +244,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun setDns(value: String?) {
         viewModelScope.launch {
             preferencesRepository.setCustomDns(value)
-            events.emit("DNS ذخیره شد")
+            events.emit("DNS ذخیره شد؛ در اتصال بعدی اعمال می‌شود")
         }
     }
 
@@ -307,7 +365,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             readTimeout = 18_000
             instanceFollowRedirects = true
             requestMethod = "GET"
-            setRequestProperty("User-Agent", "VMessPro/0.1 Android")
+            setRequestProperty("User-Agent", "VMessPro/0.2 Android")
             setRequestProperty("Accept", "text/plain,*/*")
         }
         try {
@@ -348,4 +406,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray(Charsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
+
+    override fun onCleared() {
+        coreAdapter.close()
+        database.close()
+        super.onCleared()
+    }
 }
