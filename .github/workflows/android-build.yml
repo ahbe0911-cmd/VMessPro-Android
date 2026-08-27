@@ -14,7 +14,11 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
+
+    env:
+      SING_BOX_VERSION: v1.13.19
+      ANDROID_NDK_VERSION: 28.0.13004108
 
     steps:
       - name: Checkout
@@ -31,8 +35,38 @@ jobs:
         with:
           packages: platform-tools
 
-      - name: Install Android SDK 36
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: Install Android SDK 36 and NDK r28
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;${ANDROID_NDK_VERSION}"
+
+      - name: Set up Go 1.24.7
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.7'
+          cache: false
+
+      - name: Restore libbox cache
+        id: libbox-cache
+        uses: actions/cache@v4
+        with:
+          path: app/libs/libbox.aar
+          key: libbox-${{ runner.os }}-${{ env.SING_BOX_VERSION }}-ndk-${{ env.ANDROID_NDK_VERSION }}-go-1.24.7
+
+      - name: Build sing-box libbox AAR
+        if: steps.libbox-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf sing-box-src
+          git clone --depth 1 --branch "${SING_BOX_VERSION}" https://github.com/SagerNet/sing-box.git sing-box-src
+          cd sing-box-src
+          make lib_install
+          export PATH="$(go env GOPATH)/bin:${PATH}"
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          make lib_android
+          cd ..
+          mkdir -p app/libs
+          cp sing-box-src/libbox.aar app/libs/libbox.aar
+          test -s app/libs/libbox.aar
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
