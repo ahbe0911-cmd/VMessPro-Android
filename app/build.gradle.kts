@@ -1,3 +1,5 @@
+import java.net.URI
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -12,8 +14,8 @@ android {
         applicationId = "com.vmesspro.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -46,16 +48,43 @@ android {
     lint {
         abortOnError = true
         checkReleaseBuilds = true
-        // The AnimatedContent state is intentionally driven by the surrounding navigation state.
-        // Suppress only this Compose lookup warning; all other lint checks remain blocking.
         disable += "UnusedContentLambdaTargetStateParameter"
     }
+}
+
+val vazirmatnFonts = mapOf(
+    "vazirmatn_regular.ttf" to "https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-Regular.ttf",
+    "vazirmatn_medium.ttf" to "https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-Medium.ttf",
+    "vazirmatn_bold.ttf" to "https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-Bold.ttf",
+    "vazirmatn_extra_bold.ttf" to "https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-ExtraBold.ttf",
+)
+
+val prepareVazirmatnFonts = tasks.register("prepareVazirmatnFonts") {
+    val fontDir = layout.projectDirectory.dir("src/main/res/font")
+    outputs.files(vazirmatnFonts.keys.map { fontDir.file(it) })
+    doLast {
+        val directory = fontDir.asFile.apply { mkdirs() }
+        vazirmatnFonts.forEach { (fileName, source) ->
+            val destination = directory.resolve(fileName)
+            if (!destination.exists() || destination.length() == 0L) {
+                URI(source).toURL().openStream().use { input ->
+                    destination.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+        }
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(prepareVazirmatnFonts)
 }
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2025.10.01")
     implementation(composeBom)
     androidTestImplementation(composeBom)
+
+    implementation(files("libs/libbox.aar"))
 
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.activity:activity-compose:1.11.0")
