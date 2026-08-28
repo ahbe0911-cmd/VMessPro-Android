@@ -1,0 +1,143 @@
+name: Windows 8.1 Build
+
+on:
+  push:
+    branches: [ main, 'feature/**' ]
+    paths:
+      - 'windows/**'
+      - '.github/workflows/windows81-build.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: windows81-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 35
+
+    env:
+      XRAY_VERSION: v26.7.28
+      TUN2SOCKS_VERSION: v2.5.2
+      WINTUN_VERSION: 0.14.1
+      WINTUN_SHA256: 07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Download Vazirmatn build fonts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force windows/VMessPro.Win/Resources | Out-Null
+          Invoke-WebRequest 'https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-Regular.ttf' -OutFile windows/VMessPro.Win/Resources/vazirmatn_regular.ttf
+          Invoke-WebRequest 'https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-Bold.ttf' -OutFile windows/VMessPro.Win/Resources/vazirmatn_bold.ttf
+
+      - name: Build WPF app for .NET Framework 4.8
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          msbuild windows/VMessPro.Win/VMessPro.Win.csproj /restore /m /p:Configuration=Release /p:Platform=AnyCPU
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $exe = Get-ChildItem windows/VMessPro.Win/bin/Release -Recurse -Filter VMessPro.Win.exe | Select-Object -First 1
+          if (-not $exe) { throw 'VMessPro.Win.exe was not produced' }
+          "APP_OUTPUT=$($exe.Directory.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Managed app output: $($exe.Directory.FullName)"
+
+      - name: Download Windows 8.1 compatible Xray cores
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force deps/xray64,deps/xray32 | Out-Null
+          Invoke-WebRequest "https://github.com/XTLS/Xray-core/releases/download/$env:XRAY_VERSION/Xray-win7-64.zip" -OutFile deps/xray64.zip
+          Invoke-WebRequest "https://github.com/XTLS/Xray-core/releases/download/$env:XRAY_VERSION/Xray-win7-32.zip" -OutFile deps/xray32.zip
+          Expand-Archive deps/xray64.zip deps/xray64 -Force
+          Expand-Archive deps/xray32.zip deps/xray32 -Force
+          if (-not (Get-ChildItem deps/xray64 -Recurse -Filter xray.exe)) { throw 'Win7 x64 xray.exe missing' }
+          if (-not (Get-ChildItem deps/xray32 -Recurse -Filter xray.exe)) { throw 'Win7 x86 xray.exe missing' }
+
+      - name: Download Windows 8.1 compatible tun2socks
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force deps/tun64,deps/tun32 | Out-Null
+          Invoke-WebRequest "https://github.com/xjasonlyu/tun2socks/releases/download/$env:TUN2SOCKS_VERSION/tun2socks-windows-amd64.zip" -OutFile deps/tun64.zip
+          Invoke-WebRequest "https://github.com/xjasonlyu/tun2socks/releases/download/$env:TUN2SOCKS_VERSION/tun2socks-windows-386.zip" -OutFile deps/tun32.zip
+          Expand-Archive deps/tun64.zip deps/tun64 -Force
+          Expand-Archive deps/tun32.zip deps/tun32 -Force
+          if (-not (Get-ChildItem deps/tun64 -Recurse -Filter tun2socks.exe)) { throw 'x64 tun2socks.exe missing' }
+          if (-not (Get-ChildItem deps/tun32 -Recurse -Filter tun2socks.exe)) { throw 'x86 tun2socks.exe missing' }
+
+      - name: Download and verify Wintun
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Invoke-WebRequest "https://www.wintun.net/builds/wintun-$env:WINTUN_VERSION.zip" -OutFile deps/wintun.zip
+          $actual = (Get-FileHash deps/wintun.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:WINTUN_SHA256.ToLowerInvariant()) {
+            throw "Wintun checksum mismatch: $actual"
+          }
+          Expand-Archive deps/wintun.zip deps/wintun -Force
+          if (-not (Get-ChildItem deps/wintun -Recurse -Filter wintun.dll | Where-Object FullName -Match 'amd64')) { throw 'amd64 wintun.dll missing' }
+          if (-not (Get-ChildItem deps/wintun -Recurse -Filter wintun.dll | Where-Object FullName -Match 'x86')) { throw 'x86 wintun.dll missing' }
+
+      - name: Assemble portable x64 and x86 packages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $appOut = $env:APP_OUTPUT
+          $xray64 = (Get-ChildItem deps/xray64 -Recurse -Filter xray.exe | Select-Object -First 1).FullName
+          $xray32 = (Get-ChildItem deps/xray32 -Recurse -Filter xray.exe | Select-Object -First 1).FullName
+          $tun64 = (Get-ChildItem deps/tun64 -Recurse -Filter tun2socks.exe | Select-Object -First 1).FullName
+          $tun32 = (Get-ChildItem deps/tun32 -Recurse -Filter tun2socks.exe | Select-Object -First 1).FullName
+          $wintun64 = (Get-ChildItem deps/wintun -Recurse -Filter wintun.dll | Where-Object FullName -Match 'amd64' | Select-Object -First 1).FullName
+          $wintun32 = (Get-ChildItem deps/wintun -Recurse -Filter wintun.dll | Where-Object FullName -Match '\\x86\\' | Select-Object -First 1).FullName
+
+          foreach ($arch in @('x64','x86')) {
+            $stage = "dist/VMessPro-Windows81-$arch"
+            New-Item -ItemType Directory -Force $stage,"$stage/core" | Out-Null
+            Copy-Item "$appOut/*" $stage -Recurse -Force
+            Remove-Item "$stage/*.pdb" -ErrorAction SilentlyContinue
+            if ($arch -eq 'x64') {
+              Copy-Item $xray64 "$stage/core/xray.exe"
+              Copy-Item $tun64 "$stage/core/tun2socks.exe"
+              Copy-Item $wintun64 "$stage/core/wintun.dll"
+            } else {
+              Copy-Item $xray32 "$stage/core/xray.exe"
+              Copy-Item $tun32 "$stage/core/tun2socks.exe"
+              Copy-Item $wintun32 "$stage/core/wintun.dll"
+            }
+            @"
+          VMess Pro 0.6.0 - Windows 8.1 $arch
+
+          Run VMessPro.Win.exe. Administrator permission is required because a Wintun interface and Windows routes are created.
+
+          Real connection path:
+          Xray-core (Win7-compatible build) -> local SOCKS -> tun2socks -> Wintun -> Windows routes.
+          The app only displays Connected after real HTTPS succeeds through the system tunnel.
+
+          Supported imports in this Windows 8.1 build:
+          VMess, VLESS, VLESS Reality, Trojan, and HTTP/HTTPS subscriptions containing those links.
+
+          Per-app Split Tunnel is not faked in this Windows build; the current Windows tunnel is full-system.
+          "@ | Set-Content "$stage/README.txt" -Encoding UTF8
+          }
+
+          Compress-Archive dist/VMessPro-Windows81-x64 dist/VMessPro-Windows81-0.6.0-x64.zip -Force
+          Compress-Archive dist/VMessPro-Windows81-x86 dist/VMessPro-Windows81-0.6.0-x86.zip -Force
+          Get-ChildItem dist/*.zip | ForEach-Object { Write-Host $_.Name $_.Length }
+
+      - name: Upload Windows 8.1 packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: VMessPro-Windows81-0.6.0
+          path: |
+            dist/VMessPro-Windows81-0.6.0-x64.zip
+            dist/VMessPro-Windows81-0.6.0-x86.zip
+          if-no-files-found: error
+          retention-days: 14
