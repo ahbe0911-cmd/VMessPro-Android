@@ -1,28 +1,14 @@
 package com.vmesspro.android
 
 import android.app.Application
-import io.nekohasekai.libbox.Libbox
-import io.nekohasekai.libbox.SetupOptions
-import java.io.File
-import java.util.Locale
+import go.Seq
 
 class VMessProApplication : Application() {
     override fun onCreate() {
         super.onCreate()
-
-        val workingDir = File(filesDir, "sing-box").apply { mkdirs() }
-        val tempDir = File(cacheDir, "sing-box").apply { mkdirs() }
-
-        Libbox.setLocale(Locale.getDefault().toLanguageTag().replace('-', '_'))
-        Libbox.setup(
-            SetupOptions().apply {
-                basePath = filesDir.absolutePath
-                workingPath = workingDir.absolutePath
-                tempPath = tempDir.absolutePath
-                fixAndroidStack = true
-                logMaxLines = 2_000
-                debug = BuildConfig.DEBUG
-            }
-        )
+        // gomobile/libXray needs the Android application context. XrayConfigFactory also
+        // refreshes this before native operations, but initializing once here matches the
+        // upstream Amnezia lifecycle and removes all legacy sing-box/libbox setup.
+        Seq.setContext(this)
     }
 }
