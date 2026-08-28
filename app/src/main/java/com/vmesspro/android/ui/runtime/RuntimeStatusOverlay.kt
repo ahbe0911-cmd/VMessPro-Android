@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material3.AlertDialog
@@ -43,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.vmesspro.android.core.ConnectionState
+import com.vmesspro.android.data.local.ConnectionHistoryEntity
 import com.vmesspro.android.ui.AppViewModel
 import java.util.Locale
 
@@ -60,6 +62,7 @@ fun RuntimeStatusOverlay(viewModel: AppViewModel) {
     val nodes by viewModel.nodes.collectAsStateWithLifecycle()
     val selectedNode by viewModel.selectedNode.collectAsStateWithLifecycle()
     val testingAll by viewModel.testingAllNodes.collectAsStateWithLifecycle()
+    val history by viewModel.connectionHistory.collectAsStateWithLifecycle()
 
     Box(Modifier.fillMaxSize()) {
         SmallFloatingActionButton(
@@ -222,6 +225,29 @@ fun RuntimeStatusOverlay(viewModel: AppViewModel) {
                     }
                 }
 
+                if (history.isNotEmpty()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Icon(
+                            Icons.Rounded.History,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = Color(0xFFA98CFF),
+                        )
+                        Text(
+                            "اتصال‌های اخیر",
+                            color = Color(0xFFF5F8FF),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                        )
+                    }
+                    history.take(3).forEach { item ->
+                        RecentSessionRow(item)
+                    }
+                }
+
                 Text(
                     "${nodes.size} سرور • آمار ترافیک مستقیماً از CommandStatus هسته sing-box دریافت می‌شود.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -262,6 +288,53 @@ private fun LiveMetric(
     }
 }
 
+@Composable
+private fun RecentSessionRow(item: ConnectionHistoryEntity) {
+    val statusColor = when (item.status) {
+        "CONNECTED", "DISCONNECTED" -> Color(0xFF4DE7B0)
+        "CONNECTING", "REPLACED" -> Color(0xFFFFC86B)
+        else -> Color(0xFFFF728A)
+    }
+    val endedAt = item.endedAt ?: System.currentTimeMillis()
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(13.dp),
+        color = Color(0xFF081522),
+        border = BorderStroke(1.dp, Color(0xFF1B334A)),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    item.nodeDisplayName,
+                    color = Color(0xFFEFF5FF),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "${formatDuration(endedAt - item.startedAt)} • ↓ ${formatBytes(item.downloadedBytes)} • ↑ ${formatBytes(item.uploadedBytes)}",
+                    color = Color(0xFF8FA4BC),
+                    fontSize = 8.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                historyStatusLabel(item.status),
+                color = statusColor,
+                fontSize = 8.sp,
+                fontWeight = FontWeight.ExtraBold,
+            )
+        }
+    }
+}
+
 private fun connectionLabel(state: ConnectionState): String = when (state) {
     is ConnectionState.Connected -> "متصل"
     ConnectionState.Preparing -> "آماده‌سازی"
@@ -280,6 +353,28 @@ private fun connectionColor(state: ConnectionState): Color = when (state) {
     ConnectionState.Verifying -> Color(0xFFFFC86B)
     is ConnectionState.Error -> Color(0xFFFF728A)
     ConnectionState.Disconnected -> Color(0xFF8FA4BC)
+}
+
+private fun historyStatusLabel(status: String): String = when (status) {
+    "CONNECTED" -> "متصل"
+    "DISCONNECTED" -> "پایان"
+    "CONNECTING" -> "اتصال"
+    "REPLACED" -> "تعویض"
+    "REVOKED" -> "لغو مجوز"
+    "CORE_STOPPED" -> "Core متوقف"
+    "FAILED" -> "ناموفق"
+    else -> status
+}
+
+private fun formatDuration(durationMillis: Long): String {
+    val seconds = (durationMillis.coerceAtLeast(0L) / 1000L)
+    val hours = seconds / 3600L
+    val minutes = (seconds % 3600L) / 60L
+    val remainSeconds = seconds % 60L
+    return when {
+        hours > 0 -> String.format(Locale.US, "%d:%02d:%02d", hours, minutes, remainSeconds)
+        else -> String.format(Locale.US, "%02d:%02d", minutes, remainSeconds)
+    }
 }
 
 private fun formatBytes(value: Long): String {
