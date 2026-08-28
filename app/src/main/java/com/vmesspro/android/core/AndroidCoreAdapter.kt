@@ -9,13 +9,16 @@ import androidx.room.Room
 import com.vmesspro.android.data.local.AppDatabase
 import com.vmesspro.android.data.preferences.SplitTunnelMode
 import com.vmesspro.android.data.preferences.VpnPreferencesRepository
+import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.URL
 import kotlin.system.measureTimeMillis
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -54,21 +57,40 @@ class AndroidCoreAdapter(context: Context) : CoreAdapter, AutoCloseable {
                 }
 
                 CoreContract.ACTION_STATE -> {
-                    _state.value = when (intent.getStringExtra(CoreContract.EXTRA_STATE)) {
+                    val nextState = when (intent.getStringExtra(CoreContract.EXTRA_STATE)) {
                         CoreContract.STATE_PREPARING -> ConnectionState.Preparing
                         CoreContract.STATE_CONNECTING -> ConnectionState.Connecting
                         CoreContract.STATE_VERIFYING -> ConnectionState.Verifying
                         CoreContract.STATE_CONNECTED -> {
-                            intent.getStringExtra(CoreContract.EXTRA_PROFILE_ID)
-                                ?.takeIf { it.isNotBlank() }
-                                ?.let { activeProfileId ->
-                                    adapterScope.launch {
-                                        preferencesRepository.setSelectedNode(activeProfileId)
-                                    }
-                                }
-                            ConnectionState.Connected(
-                                intent.getLongExtra(CoreContract.EXTRA_SINCE, System.currentTimeMillis())
+                            val activeProfileId = intent.getStringExtra(CoreContract.EXTRA_PROFILE_ID)
+                            val connectedSince = intent.getLongExtra(
+                                CoreContract.EXTRA_SINCE,
+                                System.currentTimeMillis(),
                             )
+                            if (!activeProfileId.isNullOrBlank()) {
+                                adapterScope.launch {
+                                    preferencesRepository.setSelectedNode(activeProfileId)
+                                }
+                            }
+
+                            // The native service may have a TUN file descriptor while web traffic is
+                            // still unusable (DNS/TLS/routing/protocol failure). Do not expose a false
+                            // Connected state. Verify a real HTTPS request from this app first; the app
+                            // is always included in its own VPN route in connect().
+                            adapterScope.launch {
+                                val verified = verifyRealWebTraffic()
+                                if (_state.value != ConnectionState.Verifying) return@launch
+                                if (verified) {
+                                    _state.value = ConnectionState.Connected(connectedSince)
+                                } else {
+                                    _state.value = ConnectionState.Error(
+                                        "تونل ساخته شد اما ترافیک واقعی وب از VPN عبور نکرد"
+                                    )
+                                    _telemetry.value = VpnTelemetry()
+                                    runCatching { disconnect() }
+                                }
+                            }
+                            ConnectionState.Verifying
                         }
                         CoreContract.STATE_RECONNECTING -> ConnectionState.Reconnecting
                         CoreContract.STATE_ERROR -> ConnectionState.Error(
@@ -76,7 +98,8 @@ class AndroidCoreAdapter(context: Context) : CoreAdapter, AutoCloseable {
                         )
                         else -> ConnectionState.Disconnected
                     }
-                    if (_state.value is ConnectionState.Disconnected || _state.value is ConnectionState.Error) {
+                    _state.value = nextState
+                    if (nextState is ConnectionState.Disconnected || nextState is ConnectionState.Error) {
                         _telemetry.value = VpnTelemetry()
                     }
                 }
@@ -154,8 +177,39 @@ class AndroidCoreAdapter(context: Context) : CoreAdapter, AutoCloseable {
             tcpLatencyMs = latency,
             httpRttMs = null,
             success = success,
-            error = if (success) null else "TCP probe failed",
+            error = if (success) null else "TCP reachability probe failed",
         )
+    }
+
+    private suspend fun verifyRealWebTraffic(): Boolean = withContext(Dispatchers.IO) {
+        // Give Android routing and the sing-box TUN stack a short moment to settle.
+        delay(250)
+        repeat(REAL_WEB_VERIFY_ATTEMPTS) { attempt ->
+            REAL_WEB_VERIFY_URLS.forEach { endpoint ->
+                if (requestConnectivityEndpoint(endpoint)) return@withContext true
+            }
+            if (attempt + 1 < REAL_WEB_VERIFY_ATTEMPTS) delay(350)
+        }
+        false
+    }
+
+    private fun requestConnectivityEndpoint(endpoint: String): Boolean {
+        var connection: HttpURLConnection? = null
+        return runCatching {
+            connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                connectTimeout = REAL_WEB_CONNECT_TIMEOUT_MS
+                readTimeout = REAL_WEB_READ_TIMEOUT_MS
+                instanceFollowRedirects = false
+                useCaches = false
+                requestMethod = "GET"
+                setRequestProperty("Connection", "close")
+                setRequestProperty("User-Agent", "VMessPro/Android connectivity-check")
+            }
+            val code = connection?.responseCode ?: -1
+            code == HttpURLConnection.HTTP_NO_CONTENT || code in 200..399
+        }.getOrDefault(false).also {
+            runCatching { connection?.disconnect() }
+        }
     }
 
     override fun close() {
@@ -166,5 +220,12 @@ class AndroidCoreAdapter(context: Context) : CoreAdapter, AutoCloseable {
 
     private companion object {
         const val MAX_FAILOVER_CANDIDATES = 5
+        const val REAL_WEB_VERIFY_ATTEMPTS = 2
+        const val REAL_WEB_CONNECT_TIMEOUT_MS = 5_000
+        const val REAL_WEB_READ_TIMEOUT_MS = 5_000
+        val REAL_WEB_VERIFY_URLS = listOf(
+            "https://www.gstatic.com/generate_204",
+            "https://cp.cloudflare.com/generate_204",
+        )
     }
 }
