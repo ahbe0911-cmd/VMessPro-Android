@@ -1,9 +1,38 @@
 import java.net.URI
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.provider.MapProperty
+import org.gradle.api.tasks.CacheableTask
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.TaskAction
 
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
+}
+
+@CacheableTask
+abstract class PrepareVazirmatnFonts : DefaultTask() {
+    @get:Input
+    abstract val fontSources: MapProperty<String, String>
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun prepare() {
+        val directory = outputDirectory.get().asFile.apply { mkdirs() }
+        fontSources.get().forEach { (fileName, source) ->
+            val destination = directory.resolve(fileName)
+            if (!destination.isFile || destination.length() == 0L) {
+                URI(source).toURL().openStream().use { input ->
+                    destination.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+        }
+    }
 }
 
 android {
@@ -59,20 +88,9 @@ val vazirmatnFonts = mapOf(
     "vazirmatn_extra_bold.ttf" to "https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-ExtraBold.ttf",
 )
 
-val prepareVazirmatnFonts = tasks.register("prepareVazirmatnFonts") {
-    val fontDir = layout.projectDirectory.dir("src/main/res/font")
-    outputs.files(vazirmatnFonts.keys.map { fontDir.file(it) })
-    doLast {
-        val directory = fontDir.asFile.apply { mkdirs() }
-        vazirmatnFonts.forEach { (fileName, source) ->
-            val destination = directory.resolve(fileName)
-            if (!destination.exists() || destination.length() == 0L) {
-                URI(source).toURL().openStream().use { input ->
-                    destination.outputStream().use { output -> input.copyTo(output) }
-                }
-            }
-        }
-    }
+val prepareVazirmatnFonts = tasks.register<PrepareVazirmatnFonts>("prepareVazirmatnFonts") {
+    fontSources.set(vazirmatnFonts)
+    outputDirectory.set(layout.projectDirectory.dir("src/main/res/font"))
 }
 
 tasks.named("preBuild").configure {

@@ -602,15 +602,15 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler, Co
         latestDownlink = message.downlink.coerceAtLeast(0L)
         latestUplinkTotal = message.uplinkTotal.coerceAtLeast(0L)
         latestDownlinkTotal = message.downlinkTotal.coerceAtLeast(0L)
-        latestConnectionsIn = message.connectionsIn.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
-        latestConnectionsOut = message.connectionsOut.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
+        latestConnectionsIn = message.connectionsIn.coerceAtLeast(0)
+        latestConnectionsOut = message.connectionsOut.coerceAtLeast(0)
         latestTrafficAvailable = message.trafficAvailable
         sendTelemetry()
     }
 
     override fun writeGroups(message: OutboundGroupIterator?) = Unit
 
-    override fun initializeClashMode(modeList: StringIterator) = Unit
+    override fun initializeClashMode(modeList: StringIterator, currentMode: String) = Unit
 
     override fun updateClashMode(newMode: String) = Unit
 

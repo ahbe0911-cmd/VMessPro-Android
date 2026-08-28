@@ -859,7 +859,7 @@ private fun ImportScreen(
         ) { Text("بررسی و ذخیره", fontWeight = FontWeight.ExtraBold) }
         summary?.let {
             Spacer(Modifier.height(11.dp))
-            Surface(RoundedCornerShape(16.dp), color = Color(0xFF0C2133), border = BorderStroke(1.dp, StrokeBright)) {
+            Surface(shape = RoundedCornerShape(16.dp), color = Color(0xFF0C2133), border = BorderStroke(1.dp, StrokeBright)) {
                 Text(it, Modifier.padding(12.dp), color = White, fontSize = 9.sp)
             }
             if (!it.startsWith("0 معتبر")) {
@@ -985,7 +985,7 @@ private fun SettingsScreen(
             }
         }
         Spacer(Modifier.height(9.dp))
-        Surface(RoundedCornerShape(17.dp), color = Cyan.copy(alpha = 0.07f), border = BorderStroke(1.dp, Cyan.copy(alpha = 0.22f))) {
+        Surface(shape = RoundedCornerShape(17.dp), color = Cyan.copy(alpha = 0.07f), border = BorderStroke(1.dp, Cyan.copy(alpha = 0.22f))) {
             Column(Modifier.padding(12.dp)) {
                 Text("Core Runtime", color = Cyan, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold)
                 Text("sing-box/libbox v1.13.19 • Android VpnService • isolated :vpn process", color = Muted, fontSize = 7.sp)
@@ -1126,13 +1126,13 @@ private fun EmptyState(title: String, subtitle: String, icon: ImageVector, actio
 }
 
 private fun stateVisual(state: ConnectionState): Pair<String, Color> = when (state) {
-    ConnectionState.Disconnected -> "قطع", Dim
-    ConnectionState.Preparing -> "آماده‌سازی", Amber
-    ConnectionState.Connecting -> "اتصال", Cyan
-    ConnectionState.Verifying -> "بررسی", Purple
-    is ConnectionState.Connected -> "متصل", Mint
-    ConnectionState.Reconnecting -> "اتصال مجدد", Amber
-    is ConnectionState.Error -> "خطا", Rose
+    ConnectionState.Disconnected -> "قطع" to Dim
+    ConnectionState.Preparing -> "آماده‌سازی" to Amber
+    ConnectionState.Connecting -> "اتصال" to Cyan
+    ConnectionState.Verifying -> "بررسی" to Purple
+    is ConnectionState.Connected -> "متصل" to Mint
+    ConnectionState.Reconnecting -> "اتصال مجدد" to Amber
+    is ConnectionState.Error -> "خطا" to Rose
 }
 
 private fun connectionTitle(state: ConnectionState, node: NodeEntity?): String = when (state) {
