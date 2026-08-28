@@ -390,7 +390,7 @@ private fun QrCameraPreview(
     }
 }
 
-@ExperimentalGetImage
+@androidx.annotation.OptIn(markerClass = [ExperimentalGetImage::class])
 private fun analyzeQrFrame(
     imageProxy: ImageProxy,
     scanner: BarcodeScanner,

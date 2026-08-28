@@ -245,7 +245,7 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                         },
                         label = "premium-screen",
                         modifier = Modifier.fillMaxSize(),
-                    ) {
+                    ) { _ ->
                         when (overlay) {
                             OverlayRoute.Import -> ImportScreen(
                                 onImport = viewModel::importText,
