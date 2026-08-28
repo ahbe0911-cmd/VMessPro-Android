@@ -43,8 +43,8 @@ android {
         applicationId = "com.vmesspro.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.5.1"
+        versionCode = 7
+        versionName = "0.6.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -114,7 +114,6 @@ dependencies {
     implementation(composeBom)
     androidTestImplementation(composeBom)
 
-    // Same mobile Xray wrapper/tun2socks stack used by AmneziaVPN's Android Xray path.
     implementation(files("libs/libxray.aar"))
 
     implementation("androidx.core:core-ktx:1.17.0")
