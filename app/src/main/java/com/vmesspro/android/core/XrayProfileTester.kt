@@ -73,7 +73,7 @@ internal class XrayProfileTester(context: Context) {
     }
 
     private companion object {
-        const val PROFILE_TEST_TIMEOUT_SECONDS = 7
+        const val PROFILE_TEST_TIMEOUT_SECONDS = 7L
         const val XRAY_ERROR_DELAY_FLOOR = 10_000L
         const val PROFILE_TEST_URL = "https://www.gstatic.com/generate_204"
     }
