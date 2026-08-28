@@ -12,21 +12,22 @@ import androidx.compose.ui.text.font.FontWeight
 import com.vmesspro.android.R
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFF3DD6F5),
-    onPrimary = Color(0xFF001419),
-    primaryContainer = Color(0xFF0A3440),
-    onPrimaryContainer = Color(0xFFD6F7FF),
-    secondary = Color(0xFFB8C8D9),
-    onSecondary = Color(0xFF172A38),
-    tertiary = Color(0xFF53DDAA),
-    background = Color(0xFF071019),
-    onBackground = Color(0xFFF5F8FA),
-    surface = Color(0xFF0C1620),
-    onSurface = Color(0xFFF5F8FA),
-    surfaceVariant = Color(0xFF132330),
-    onSurfaceVariant = Color(0xFFBAC8D2),
-    outline = Color(0xFF3B5668),
-    error = Color(0xFFFF6F7D),
+    primary = Color(0xFF26D8E8),
+    onPrimary = Color(0xFF04191D),
+    primaryContainer = Color(0xFF163A4A),
+    onPrimaryContainer = Color(0xFFD7FAFF),
+    secondary = Color(0xFF9B6DFF),
+    onSecondary = Color(0xFF170A35),
+    tertiary = Color(0xFF3DDEA0),
+    onTertiary = Color(0xFF041A12),
+    background = Color(0xFF081226),
+    onBackground = Color(0xFFF7F8FF),
+    surface = Color(0xFF111B36),
+    onSurface = Color(0xFFF7F8FF),
+    surfaceVariant = Color(0xFF1B2545),
+    onSurfaceVariant = Color(0xFFB9C4E2),
+    outline = Color(0xFF526080),
+    error = Color(0xFFFF6477),
 )
 
 val VazirmatnFontFamily = FontFamily(
