@@ -2,20 +2,32 @@
 
 VMess Pro builds and bundles third-party open-source components. Their upstream licenses remain in force.
 
-## sing-box / libbox
+## Amnezia libXray
 
-- Upstream: `SagerNet/sing-box`
-- Pinned version: `v1.13.19`
-- License: GNU General Public License v3.0 or later (GPL-3.0-or-later)
-- The Android AAR is built from upstream source in `.github/workflows/android-build.yml`; it is not a placeholder binary.
+- Upstream: `amnezia-vpn/amnezia-libxray`
+- Pinned commit: `e8cc06d7427251fa549093e7cc32c28b0f5fbafa`
+- License: MIT
+- The Android AAR is built from the pinned upstream source in `.github/workflows/android-build.yml`; it is not a placeholder binary.
+- libXray provides the Android mobile bindings used here for Xray-core, configuration conversion, real HTTP profile testing, socket protection integration, and tun2socks.
 
-Because the distributed APK contains libbox, redistribution must comply with the GPL, including providing the corresponding source and license notices as required by the license.
+## Amnezia Xray Core
+
+- Upstream: `amnezia-vpn/amnezia-xray-core`
+- Version selected by the pinned libXray `go.mod`: `v1.260728.0`
+- License: Mozilla Public License 2.0 (MPL-2.0)
+- Corresponding source remains available from the upstream repository and is reproducibly selected by the pinned libXray dependency graph.
+
+## Amnezia tun2socks
+
+- Upstream: `amnezia-vpn/amnezia-tun2socks`
+- Version selected by the pinned libXray `go.mod`: `v2.5.6`
+- It is linked through libXray and routes the Android TUN file descriptor to the local Xray SOCKS inbound.
 
 ## Vazirmatn
 
 - Upstream: `rastikerdar/vazirmatn`
 - Pinned release: `v33.003`
 - License: SIL Open Font License 1.1
-- The build downloads the pinned Regular, Medium, Bold and ExtraBold TTF files and packages them as Android font resources.
+- The build downloads the pinned Regular and Bold TTF files and packages them as Android font resources.
 
 No font file is fetched at application runtime; the installed APK contains the font resources produced at build time.
