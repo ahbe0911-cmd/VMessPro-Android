@@ -15,13 +15,14 @@ concurrency:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
 
     env:
       XRAY_VERSION: v26.7.28
       TUN2SOCKS_VERSION: v2.5.2
       WINTUN_VERSION: 0.14.1
       WINTUN_SHA256: 07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
+      APP_VERSION: 0.6.1
 
     steps:
       - name: Checkout
@@ -37,6 +38,27 @@ jobs:
           New-Item -ItemType Directory -Force windows/VMessPro.Win/Resources | Out-Null
           Invoke-WebRequest 'https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-Regular.ttf' -OutFile windows/VMessPro.Win/Resources/vazirmatn_regular.ttf
           Invoke-WebRequest 'https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-Bold.ttf' -OutFile windows/VMessPro.Win/Resources/vazirmatn_bold.ttf
+
+      - name: Apply Premium 0.6.1 UI and compatibility fix
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Copy-Item windows/VMessPro.Win/Premium061.MainWindow.xaml.template windows/VMessPro.Win/MainWindow.xaml -Force
+          Copy-Item windows/VMessPro.Win/Premium061.MainWindow.xaml.cs.template windows/VMessPro.Win/MainWindow.xaml.cs -Force
+
+          $enginePath = 'windows/VMessPro.Win/VpnEngine.cs'
+          $text = Get-Content $enginePath -Raw
+          $old = 'public ParsedShare EnsureMetadata(VpnProfile profile)'
+          $new = 'internal ParsedShare EnsureMetadata(VpnProfile profile)'
+          if (-not $text.Contains($old) -and -not $text.Contains($new)) {
+            throw 'VpnEngine EnsureMetadata signature not found'
+          }
+          if ($text.Contains($old)) {
+            $text = $text.Replace($old, $new)
+            Set-Content -Path $enginePath -Value $text -Encoding UTF8
+          }
+          $verify = Get-Content $enginePath -Raw
+          if (-not $verify.Contains($new)) { throw 'VpnEngine accessibility patch failed' }
 
       - name: Build WPF app for .NET Framework 4.8
         shell: pwsh
@@ -58,8 +80,8 @@ jobs:
           Invoke-WebRequest "https://github.com/XTLS/Xray-core/releases/download/$env:XRAY_VERSION/Xray-win7-32.zip" -OutFile deps/xray32.zip
           Expand-Archive deps/xray64.zip deps/xray64 -Force
           Expand-Archive deps/xray32.zip deps/xray32 -Force
-          if (-not (Get-ChildItem deps/xray64 -Recurse -Filter xray.exe)) { throw 'Win7 x64 xray.exe missing' }
-          if (-not (Get-ChildItem deps/xray32 -Recurse -Filter xray.exe)) { throw 'Win7 x86 xray.exe missing' }
+          if (-not (Get-ChildItem deps/xray64 -Recurse -Filter xray.exe | Select-Object -First 1)) { throw 'Win7 x64 xray.exe missing' }
+          if (-not (Get-ChildItem deps/xray32 -Recurse -Filter xray.exe | Select-Object -First 1)) { throw 'Win7 x86 xray.exe missing' }
 
       - name: Download Windows 8.1 compatible tun2socks
         shell: pwsh
@@ -70,8 +92,8 @@ jobs:
           Invoke-WebRequest "https://github.com/xjasonlyu/tun2socks/releases/download/$env:TUN2SOCKS_VERSION/tun2socks-windows-386.zip" -OutFile deps/tun32.zip
           Expand-Archive deps/tun64.zip deps/tun64 -Force
           Expand-Archive deps/tun32.zip deps/tun32 -Force
-          if (-not (Get-ChildItem deps/tun64 -Recurse -Filter tun2socks.exe)) { throw 'x64 tun2socks.exe missing' }
-          if (-not (Get-ChildItem deps/tun32 -Recurse -Filter tun2socks.exe)) { throw 'x86 tun2socks.exe missing' }
+          if (-not (Get-ChildItem deps/tun64 -Recurse -Filter tun2socks.exe | Select-Object -First 1)) { throw 'x64 tun2socks.exe missing' }
+          if (-not (Get-ChildItem deps/tun32 -Recurse -Filter tun2socks.exe | Select-Object -First 1)) { throw 'x86 tun2socks.exe missing' }
 
       - name: Download and verify Wintun
         shell: pwsh
@@ -83,8 +105,8 @@ jobs:
             throw "Wintun checksum mismatch: $actual"
           }
           Expand-Archive deps/wintun.zip deps/wintun -Force
-          if (-not (Get-ChildItem deps/wintun -Recurse -Filter wintun.dll | Where-Object FullName -Match 'amd64')) { throw 'amd64 wintun.dll missing' }
-          if (-not (Get-ChildItem deps/wintun -Recurse -Filter wintun.dll | Where-Object FullName -Match 'x86')) { throw 'x86 wintun.dll missing' }
+          if (-not (Get-ChildItem deps/wintun -Recurse -Filter wintun.dll | Where-Object FullName -Match 'amd64' | Select-Object -First 1)) { throw 'amd64 wintun.dll missing' }
+          if (-not (Get-ChildItem deps/wintun -Recurse -Filter wintun.dll | Where-Object FullName -Match '\\x86\\' | Select-Object -First 1)) { throw 'x86 wintun.dll missing' }
 
       - name: Assemble portable x64 and x86 packages
         shell: pwsh
@@ -99,7 +121,7 @@ jobs:
           $wintun32 = (Get-ChildItem deps/wintun -Recurse -Filter wintun.dll | Where-Object FullName -Match '\\x86\\' | Select-Object -First 1).FullName
 
           foreach ($arch in @('x64','x86')) {
-            $stage = "dist/VMessPro-Windows81-$arch"
+            $stage = "dist/VMessPro-Windows81-$env:APP_VERSION-$arch"
             New-Item -ItemType Directory -Force $stage,"$stage/core" | Out-Null
             Copy-Item "$appOut/*" $stage -Recurse -Force
             Remove-Item "$stage/*.pdb" -ErrorAction SilentlyContinue
@@ -112,32 +134,46 @@ jobs:
               Copy-Item $tun32 "$stage/core/tun2socks.exe"
               Copy-Item $wintun32 "$stage/core/wintun.dll"
             }
-            @"
-          VMess Pro 0.6.0 - Windows 8.1 $arch
 
-          Run VMessPro.Win.exe. Administrator permission is required because a Wintun interface and Windows routes are created.
+            @"
+          VMess Pro $env:APP_VERSION - Windows 8.1 $arch
+
+          Run VMessPro.Win.exe as Administrator. Administrator permission is required to create the Wintun interface and Windows routes.
 
           Real connection path:
-          Xray-core (Win7-compatible build) -> local SOCKS -> tun2socks -> Wintun -> Windows routes.
-          The app only displays Connected after real HTTPS succeeds through the system tunnel.
+          Xray-core (Windows 7 compatible build) -> local SOCKS -> tun2socks -> Wintun -> Windows routes.
+          Connected is shown only after real HTTPS verification succeeds.
 
-          Supported imports in this Windows 8.1 build:
+          Supported imports:
           VMess, VLESS, VLESS Reality, Trojan, and HTTP/HTTPS subscriptions containing those links.
 
-          Per-app Split Tunnel is not faked in this Windows build; the current Windows tunnel is full-system.
+          Split Tunnel:
+          This build is a real full-system tunnel. Per-app Windows Split Tunnel is not faked and is not enabled in this build.
           "@ | Set-Content "$stage/README.txt" -Encoding UTF8
+
+            @"
+          VMess Pro $env:APP_VERSION
+          Windows target: Windows 8.1 / .NET Framework 4.8
+          Xray: $env:XRAY_VERSION (Win7-compatible build)
+          tun2socks: $env:TUN2SOCKS_VERSION
+          Wintun: $env:WINTUN_VERSION
+          Architecture: $arch
+          "@ | Set-Content "$stage/BUILD-INFO.txt" -Encoding UTF8
           }
 
-          Compress-Archive dist/VMessPro-Windows81-x64 dist/VMessPro-Windows81-0.6.0-x64.zip -Force
-          Compress-Archive dist/VMessPro-Windows81-x86 dist/VMessPro-Windows81-0.6.0-x86.zip -Force
-          Get-ChildItem dist/*.zip | ForEach-Object { Write-Host $_.Name $_.Length }
+          Compress-Archive "dist/VMessPro-Windows81-$env:APP_VERSION-x64" "dist/VMessPro-Windows81-$env:APP_VERSION-x64.zip" -Force
+          Compress-Archive "dist/VMessPro-Windows81-$env:APP_VERSION-x86" "dist/VMessPro-Windows81-$env:APP_VERSION-x86.zip" -Force
+          Get-ChildItem dist/*.zip | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+            Write-Host "$($_.Name) $($_.Length) SHA256=$hash"
+          }
 
       - name: Upload Windows 8.1 packages
         uses: actions/upload-artifact@v4
         with:
-          name: VMessPro-Windows81-0.6.0
+          name: VMessPro-Windows81-Premium-0.6.1
           path: |
-            dist/VMessPro-Windows81-0.6.0-x64.zip
-            dist/VMessPro-Windows81-0.6.0-x86.zip
+            dist/VMessPro-Windows81-0.6.1-x64.zip
+            dist/VMessPro-Windows81-0.6.1-x86.zip
           if-no-files-found: error
           retention-days: 14
