@@ -9,13 +9,11 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using System.Web.Script.Serialization;
 
 namespace VMessPro.Win
 {
     public sealed class VpnEngine : IDisposable
     {
-        private const string TunName = "VMessPro";
         private const string TunGuid = "{30E6A0AA-59A6-4A96-9D18-9B5F5C1A6E51}";
         private const string TunAddress = "192.168.123.1";
 
@@ -24,8 +22,6 @@ namespace VMessPro.Win
         private readonly string _runtimeDir;
         private readonly string _xrayPath;
         private readonly string _tun2SocksPath;
-        private readonly string _helperPath;
-        private readonly JavaScriptSerializer _json = new JavaScriptSerializer();
 
         private Process _xray;
         private Process _tun2Socks;
@@ -34,6 +30,7 @@ namespace VMessPro.Win
         private int _physicalIfIndex;
         private int _tunIfIndex;
         private string _tunInterfaceId;
+        private string _tunInterfaceName;
         private long _previousRx;
         private long _previousTx;
         private DateTime _previousTrafficAt;
@@ -55,12 +52,16 @@ namespace VMessPro.Win
             Directory.CreateDirectory(_runtimeDir);
             _xrayPath = Path.Combine(_coreDir, "xray.exe");
             _tun2SocksPath = Path.Combine(_coreDir, "tun2socks.exe");
-            _helperPath = Path.Combine(_coreDir, "vmesspro-helper.exe");
         }
 
         public bool CoreFilesPresent
         {
-            get { return File.Exists(_xrayPath) && File.Exists(_tun2SocksPath) && File.Exists(_helperPath) && File.Exists(Path.Combine(_coreDir, "wintun.dll")); }
+            get
+            {
+                return File.Exists(_xrayPath) &&
+                       File.Exists(_tun2SocksPath) &&
+                       File.Exists(Path.Combine(_coreDir, "wintun.dll"));
+            }
         }
 
         public async Task ConnectAsync(VpnProfile profile)
@@ -73,50 +74,49 @@ namespace VMessPro.Win
 
             try
             {
-                var meta = await EnsureMetadataAsync(profile).ConfigureAwait(false);
-                if (string.IsNullOrWhiteSpace(meta.Host)) throw new InvalidOperationException("آدرس سرور از کانفیگ استخراج نشد.");
-
-                var endpoint = await ResolveIpv4Async(meta.Host).ConfigureAwait(false);
+                var parsed = EnsureMetadata(profile);
+                var endpoint = await ResolveIpv4Async(parsed.Host).ConfigureAwait(false);
                 _serverIp = endpoint.ToString();
+
                 var route = FindDefaultRoute();
                 _gateway = route.Gateway;
                 _physicalIfIndex = route.InterfaceIndex;
 
                 var socksPort = GetFreePort();
                 var httpPort = GetFreePort();
-                var rawPath = Path.Combine(_runtimeDir, "active-share.txt");
                 var configPath = Path.Combine(_runtimeDir, "active-xray.json");
-                File.WriteAllText(rawPath, profile.RawLink.Trim(), new UTF8Encoding(false));
-
-                var helper = await RunProcessCaptureAsync(
-                    _helperPath,
-                    "build " + Quote(rawPath) + " " + Quote(configPath) + " " + socksPort + " " + httpPort + " " + Quote(_serverIp),
-                    _coreDir,
-                    15000).ConfigureAwait(false);
-                if (helper.ExitCode != 0) throw new InvalidOperationException("تبدیل کانفیگ ناموفق بود: " + helper.Error);
+                File.WriteAllText(
+                    configPath,
+                    XrayConfigBuilder.BuildJson(parsed, socksPort, httpPort, _serverIp),
+                    new UTF8Encoding(false));
 
                 SetState(WinVpnState.Connecting, "در حال راه‌اندازی Xray…");
                 _xray = StartHidden(_xrayPath, "run -c " + Quote(configPath), _coreDir);
-                await WaitForTcpPortAsync(httpPort, 5000).ConfigureAwait(false);
+                await WaitForTcpPortAsync(httpPort, 5500).ConfigureAwait(false);
 
                 SetState(WinVpnState.Verifying, "در حال تست واقعی کانفیگ…");
                 var proxyLatency = await VerifyThroughHttpProxyAsync(httpPort).ConfigureAwait(false);
                 profile.LatencyMs = proxyLatency;
                 profile.LastSuccess = true;
 
+                var beforeInterfaces = new HashSet<string>(
+                    NetworkInterface.GetAllNetworkInterfaces().Select(n => n.Id),
+                    StringComparer.OrdinalIgnoreCase);
+
                 _tun2Socks = StartHidden(
                     _tun2SocksPath,
-                    "--device " + Quote("tun://" + TunName + "?guid=" + TunGuid) +
+                    "--device " + Quote("tun://wintun?guid=" + TunGuid) +
                     " --proxy " + Quote("socks5://127.0.0.1:" + socksPort) +
                     " --mtu 1500 --loglevel warning",
                     _coreDir);
 
-                var tun = await WaitForTunInterfaceAsync(7000).ConfigureAwait(false);
+                var tun = await WaitForTunInterfaceAsync(beforeInterfaces, 7500).ConfigureAwait(false);
                 _tunIfIndex = tun.GetIPProperties().GetIPv4Properties().Index;
                 _tunInterfaceId = tun.Id;
+                _tunInterfaceName = tun.Name;
 
-                RunNetsh("interface ipv4 set address name=" + Quote(TunName) + " source=static address=" + TunAddress + " mask=255.255.255.0 gateway=none");
-                RunNetsh("interface ipv4 set dnsservers name=" + Quote(TunName) + " source=static address=1.1.1.1 register=none validate=no");
+                RunNetsh("interface ipv4 set address name=" + Quote(_tunInterfaceName) + " source=static address=" + TunAddress + " mask=255.255.255.0 gateway=none");
+                RunNetsh("interface ipv4 set dnsservers name=" + Quote(_tunInterfaceName) + " source=static address=1.1.1.1 register=none validate=no");
 
                 AddRoute(_serverIp, "255.255.255.255", _gateway, 1, _physicalIfIndex);
                 AddRoute("0.0.0.0", "128.0.0.0", TunAddress, 5, _tunIfIndex);
@@ -153,26 +153,21 @@ namespace VMessPro.Win
             if (State == WinVpnState.Connected || State == WinVpnState.Connecting || State == WinVpnState.Verifying)
                 throw new InvalidOperationException("برای تست مستقل سرورها ابتدا VPN را قطع کنید.");
 
-            var meta = await EnsureMetadataAsync(profile).ConfigureAwait(false);
-            var endpoint = await ResolveIpv4Async(meta.Host).ConfigureAwait(false);
+            var parsed = EnsureMetadata(profile);
+            var endpoint = await ResolveIpv4Async(parsed.Host).ConfigureAwait(false);
             var socksPort = GetFreePort();
             var httpPort = GetFreePort();
-            var token = Guid.NewGuid().ToString("N");
-            var rawPath = Path.Combine(_runtimeDir, "test-" + token + ".txt");
-            var configPath = Path.Combine(_runtimeDir, "test-" + token + ".json");
-            File.WriteAllText(rawPath, profile.RawLink.Trim(), new UTF8Encoding(false));
+            var configPath = Path.Combine(_runtimeDir, "test-" + Guid.NewGuid().ToString("N") + ".json");
+            File.WriteAllText(
+                configPath,
+                XrayConfigBuilder.BuildJson(parsed, socksPort, httpPort, endpoint.ToString()),
+                new UTF8Encoding(false));
 
             Process process = null;
             try
             {
-                var helper = await RunProcessCaptureAsync(
-                    _helperPath,
-                    "build " + Quote(rawPath) + " " + Quote(configPath) + " " + socksPort + " " + httpPort + " " + Quote(endpoint.ToString()),
-                    _coreDir,
-                    15000).ConfigureAwait(false);
-                if (helper.ExitCode != 0) throw new InvalidOperationException(helper.Error);
                 process = StartHidden(_xrayPath, "run -c " + Quote(configPath), _coreDir);
-                await WaitForTcpPortAsync(httpPort, 5000).ConfigureAwait(false);
+                await WaitForTcpPortAsync(httpPort, 5500).ConfigureAwait(false);
                 var latency = await VerifyThroughHttpProxyAsync(httpPort).ConfigureAwait(false);
                 profile.LatencyMs = latency;
                 profile.LastSuccess = true;
@@ -186,7 +181,6 @@ namespace VMessPro.Win
             finally
             {
                 KillQuietly(process);
-                TryDelete(rawPath);
                 TryDelete(configPath);
             }
         }
@@ -195,7 +189,10 @@ namespace VMessPro.Win
         {
             if (string.IsNullOrWhiteSpace(input)) return new List<VpnProfile>();
             var text = input.Trim();
-            if ((text.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || text.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) && !text.Contains("\n"))
+
+            if ((text.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                 text.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) &&
+                text.IndexOf('\n') < 0)
             {
                 using (var client = new WebClient())
                 {
@@ -204,41 +201,28 @@ namespace VMessPro.Win
                 }
             }
 
-            var token = Guid.NewGuid().ToString("N");
-            var inputPath = Path.Combine(_runtimeDir, "import-" + token + ".txt");
-            var outputPath = Path.Combine(_runtimeDir, "normalized-" + token + ".txt");
-            File.WriteAllText(inputPath, text, new UTF8Encoding(false));
-            try
+            var links = XrayConfigBuilder.ExtractShareLinks(text);
+            var profiles = new List<VpnProfile>();
+            foreach (var link in links)
             {
-                var result = await RunProcessCaptureAsync(_helperPath, "normalize " + Quote(inputPath) + " " + Quote(outputPath), _coreDir, 20000).ConfigureAwait(false);
-                if (result.ExitCode != 0) throw new InvalidOperationException("Import: " + result.Error);
-                if (!File.Exists(outputPath)) return new List<VpnProfile>();
-
-                var links = File.ReadAllLines(outputPath, Encoding.UTF8)
-                    .Select(v => v.Trim())
-                    .Where(v => !string.IsNullOrWhiteSpace(v))
-                    .Distinct(StringComparer.Ordinal)
-                    .ToList();
-
-                var profiles = new List<VpnProfile>();
-                foreach (var link in links)
+                try
                 {
-                    var p = new VpnProfile { RawLink = link, Id = ProfileStore.StableId(link) };
-                    try { await EnsureMetadataAsync(p).ConfigureAwait(false); }
-                    catch
+                    var parsed = XrayConfigBuilder.Parse(link);
+                    profiles.Add(new VpnProfile
                     {
-                        p.Protocol = link.Split(new[] { "://" }, StringSplitOptions.None)[0].ToUpperInvariant();
-                        p.Name = p.Protocol + " profile";
-                    }
-                    profiles.Add(p);
+                        Id = ProfileStore.StableId(link),
+                        RawLink = link,
+                        Name = parsed.Name,
+                        Protocol = parsed.Protocol,
+                        Host = parsed.Host
+                    });
                 }
-                return profiles;
+                catch
+                {
+                    // Invalid entries are intentionally skipped instead of becoming fake profiles.
+                }
             }
-            finally
-            {
-                TryDelete(inputPath);
-                TryDelete(outputPath);
-            }
+            return profiles;
         }
 
         public ConnectionSnapshot PollTraffic()
@@ -246,7 +230,8 @@ namespace VMessPro.Win
             if (State != WinVpnState.Connected || string.IsNullOrWhiteSpace(_tunInterfaceId)) return Snapshot;
             try
             {
-                var nic = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(n => string.Equals(n.Id, _tunInterfaceId, StringComparison.OrdinalIgnoreCase));
+                var nic = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(n =>
+                    string.Equals(n.Id, _tunInterfaceId, StringComparison.OrdinalIgnoreCase));
                 if (nic == null) return Snapshot;
                 var stats = nic.GetIPv4Statistics();
                 var now = DateTime.UtcNow;
@@ -264,33 +249,13 @@ namespace VMessPro.Win
             return Snapshot;
         }
 
-        public async Task<ProfileMeta> EnsureMetadataAsync(VpnProfile profile)
+        public ParsedShare EnsureMetadata(VpnProfile profile)
         {
-            if (!string.IsNullOrWhiteSpace(profile.Host) && !string.IsNullOrWhiteSpace(profile.Protocol) && !string.IsNullOrWhiteSpace(profile.Name))
-                return new ProfileMeta { Host = profile.Host, Name = profile.Name, Protocol = profile.Protocol };
-
-            var path = Path.Combine(_runtimeDir, "meta-" + Guid.NewGuid().ToString("N") + ".txt");
-            File.WriteAllText(path, profile.RawLink.Trim(), new UTF8Encoding(false));
-            try
-            {
-                var result = await RunProcessCaptureAsync(_helperPath, "meta " + Quote(path), _coreDir, 12000).ConfigureAwait(false);
-                if (result.ExitCode != 0) throw new InvalidOperationException(result.Error);
-                var map = _json.Deserialize<Dictionary<string, object>>(result.Output);
-                var meta = new ProfileMeta
-                {
-                    Protocol = Value(map, "protocol").ToUpperInvariant(),
-                    Name = Value(map, "name"),
-                    Host = Value(map, "host")
-                };
-                profile.Protocol = string.IsNullOrWhiteSpace(meta.Protocol) ? "XRAY" : meta.Protocol;
-                profile.Name = string.IsNullOrWhiteSpace(meta.Name) ? profile.Protocol : meta.Name;
-                profile.Host = meta.Host;
-                return meta;
-            }
-            finally
-            {
-                TryDelete(path);
-            }
+            var parsed = XrayConfigBuilder.Parse(profile.RawLink);
+            profile.Protocol = parsed.Protocol;
+            profile.Name = parsed.Name;
+            profile.Host = parsed.Host;
+            return parsed;
         }
 
         private async Task DisconnectInternalAsync(bool broadcast)
@@ -309,6 +274,7 @@ namespace VMessPro.Win
             _physicalIfIndex = 0;
             _tunIfIndex = 0;
             _tunInterfaceId = null;
+            _tunInterfaceName = null;
             await Task.Delay(60).ConfigureAwait(false);
             if (broadcast) SetState(WinVpnState.Disconnected, "قطع • آماده برای اتصال");
         }
@@ -316,7 +282,11 @@ namespace VMessPro.Win
         private async Task<int> VerifyThroughHttpProxyAsync(int httpPort)
         {
             Exception last = null;
-            foreach (var endpoint in new[] { "https://www.gstatic.com/generate_204", "https://cp.cloudflare.com/generate_204" })
+            foreach (var endpoint in new[]
+            {
+                "https://www.gstatic.com/generate_204",
+                "https://cp.cloudflare.com/generate_204"
+            })
             {
                 try
                 {
@@ -332,7 +302,8 @@ namespace VMessPro.Win
                     {
                         sw.Stop();
                         var code = (int)response.StatusCode;
-                        if (code == 204 || (code >= 200 && code < 400)) return Math.Max(1, (int)sw.ElapsedMilliseconds);
+                        if (code == 204 || (code >= 200 && code < 400))
+                            return Math.Max(1, (int)sw.ElapsedMilliseconds);
                     }
                 }
                 catch (Exception ex) { last = ex; }
@@ -343,7 +314,11 @@ namespace VMessPro.Win
         private async Task<int> VerifySystemTunnelAsync()
         {
             Exception last = null;
-            foreach (var endpoint in new[] { "https://www.gstatic.com/generate_204", "https://cp.cloudflare.com/generate_204" })
+            foreach (var endpoint in new[]
+            {
+                "https://www.gstatic.com/generate_204",
+                "https://cp.cloudflare.com/generate_204"
+            })
             {
                 try
                 {
@@ -359,7 +334,8 @@ namespace VMessPro.Win
                     {
                         sw.Stop();
                         var code = (int)response.StatusCode;
-                        if (code == 204 || (code >= 200 && code < 400)) return Math.Max(1, (int)sw.ElapsedMilliseconds);
+                        if (code == 204 || (code >= 200 && code < 400))
+                            return Math.Max(1, (int)sw.ElapsedMilliseconds);
                     }
                 }
                 catch (Exception ex) { last = ex; }
@@ -411,15 +387,24 @@ namespace VMessPro.Win
             throw new TimeoutException("Xray local proxy آماده نشد.", last);
         }
 
-        private async Task<NetworkInterface> WaitForTunInterfaceAsync(int timeoutMs)
+        private async Task<NetworkInterface> WaitForTunInterfaceAsync(HashSet<string> before, int timeoutMs)
         {
             var sw = Stopwatch.StartNew();
             while (sw.ElapsedMilliseconds < timeoutMs)
             {
-                var found = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(n =>
-                    string.Equals(n.Name, TunName, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(n.Name, "wintun", StringComparison.OrdinalIgnoreCase) ||
-                    (n.Description ?? string.Empty).IndexOf("Wintun", StringComparison.OrdinalIgnoreCase) >= 0);
+                var all = NetworkInterface.GetAllNetworkInterfaces();
+                var found = all.FirstOrDefault(n =>
+                    !before.Contains(n.Id) &&
+                    ((n.Description ?? string.Empty).IndexOf("Wintun", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                     (n.Name ?? string.Empty).IndexOf("wintun", StringComparison.OrdinalIgnoreCase) >= 0));
+
+                if (found == null)
+                {
+                    found = all.FirstOrDefault(n =>
+                        (n.Description ?? string.Empty).IndexOf("Wintun", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        (n.Name ?? string.Empty).IndexOf("wintun", StringComparison.OrdinalIgnoreCase) >= 0);
+                }
+
                 if (found != null) return found;
                 await Task.Delay(120).ConfigureAwait(false);
             }
@@ -435,7 +420,12 @@ namespace VMessPro.Win
             if (matches.Count == 0) throw new InvalidOperationException("Default IPv4 route پیدا نشد.");
 
             var candidates = matches.Cast<Match>()
-                .Select(m => new { Gateway = m.Groups["gw"].Value, InterfaceIp = m.Groups["iface"].Value, Metric = int.Parse(m.Groups["metric"].Value) })
+                .Select(m => new
+                {
+                    Gateway = m.Groups["gw"].Value,
+                    InterfaceIp = m.Groups["iface"].Value,
+                    Metric = int.Parse(m.Groups["metric"].Value)
+                })
                 .OrderBy(v => v.Metric)
                 .ToList();
 
@@ -443,10 +433,17 @@ namespace VMessPro.Win
             {
                 var nic = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(n =>
                     n.OperationalStatus == OperationalStatus.Up &&
-                    n.GetIPProperties().UnicastAddresses.Any(a => a.Address.AddressFamily == AddressFamily.InterNetwork && a.Address.ToString() == item.InterfaceIp));
+                    n.GetIPProperties().UnicastAddresses.Any(a =>
+                        a.Address.AddressFamily == AddressFamily.InterNetwork &&
+                        a.Address.ToString() == item.InterfaceIp));
                 if (nic == null) continue;
                 var index = nic.GetIPProperties().GetIPv4Properties().Index;
-                return new DefaultRoute { Gateway = item.Gateway, InterfaceIndex = index, InterfaceName = nic.Name };
+                return new DefaultRoute
+                {
+                    Gateway = item.Gateway,
+                    InterfaceIndex = index,
+                    InterfaceName = nic.Name
+                };
             }
             throw new InvalidOperationException("رابط شبکه اصلی شناسایی نشد.");
         }
@@ -456,8 +453,10 @@ namespace VMessPro.Win
             return await Task.Run(() =>
             {
                 IPAddress literal;
-                if (IPAddress.TryParse(host, out literal) && literal.AddressFamily == AddressFamily.InterNetwork) return literal;
-                var address = Dns.GetHostAddresses(host).FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork);
+                if (IPAddress.TryParse(host, out literal) && literal.AddressFamily == AddressFamily.InterNetwork)
+                    return literal;
+                var address = Dns.GetHostAddresses(host)
+                    .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork);
                 if (address == null) throw new InvalidOperationException("IPv4 سرور Resolve نشد: " + host);
                 return address;
             }).ConfigureAwait(false);
@@ -467,7 +466,8 @@ namespace VMessPro.Win
         {
             try
             {
-                var nic = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(n => string.Equals(n.Id, _tunInterfaceId, StringComparison.OrdinalIgnoreCase));
+                var nic = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(n =>
+                    string.Equals(n.Id, _tunInterfaceId, StringComparison.OrdinalIgnoreCase));
                 if (nic != null)
                 {
                     var stats = nic.GetIPv4Statistics();
@@ -483,7 +483,12 @@ namespace VMessPro.Win
             _previousTrafficAt = DateTime.UtcNow;
         }
 
-        private void SetState(WinVpnState state, string message, int? latency = null, string publicIp = null, DateTime? since = null)
+        private void SetState(
+            WinVpnState state,
+            string message,
+            int? latency = null,
+            string publicIp = null,
+            DateTime? since = null)
         {
             State = state;
             Snapshot.State = state;
@@ -522,11 +527,6 @@ namespace VMessPro.Win
             return process;
         }
 
-        private static async Task<ProcessResult> RunProcessCaptureAsync(string file, string args, string workDir, int timeoutMs)
-        {
-            return await Task.Run(() => RunProcessCapture(file, args, workDir, timeoutMs)).ConfigureAwait(false);
-        }
-
         private static ProcessResult RunProcessCapture(string file, string args, string workDir, int timeoutMs)
         {
             var start = new ProcessStartInfo(file, args)
@@ -556,7 +556,8 @@ namespace VMessPro.Win
         private static void RunNetsh(string args)
         {
             var result = RunProcessCapture("netsh.exe", args, Environment.SystemDirectory, 8000);
-            if (result.ExitCode != 0) throw new InvalidOperationException("netsh: " + result.Error + " " + result.Output);
+            if (result.ExitCode != 0)
+                throw new InvalidOperationException("netsh: " + result.Error + " " + result.Output);
         }
 
         private static void AddRoute(string destination, string mask, string gateway, int metric, int ifIndex)
@@ -568,13 +569,15 @@ namespace VMessPro.Win
             {
                 DeleteRoute(destination, mask, gateway, ifIndex);
                 result = RunProcessCapture("route.exe", args, Environment.SystemDirectory, 6000);
-                if (result.ExitCode != 0) throw new InvalidOperationException("route add failed: " + result.Output + result.Error);
+                if (result.ExitCode != 0)
+                    throw new InvalidOperationException("route add failed: " + result.Output + result.Error);
             }
         }
 
         private static void DeleteRoute(string destination, string mask, string gateway, int ifIndex)
         {
-            if (string.IsNullOrWhiteSpace(destination) || string.IsNullOrWhiteSpace(mask) || string.IsNullOrWhiteSpace(gateway)) return;
+            if (string.IsNullOrWhiteSpace(destination) || string.IsNullOrWhiteSpace(mask) || string.IsNullOrWhiteSpace(gateway))
+                return;
             var args = "DELETE " + destination + " MASK " + mask + " " + gateway;
             if (ifIndex > 0) args += " IF " + ifIndex;
             try { RunProcessCapture("route.exe", args, Environment.SystemDirectory, 4000); } catch { }
@@ -597,7 +600,11 @@ namespace VMessPro.Win
 
         private static void TryDelete(string path)
         {
-            try { if (!string.IsNullOrWhiteSpace(path) && File.Exists(path)) File.Delete(path); } catch { }
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(path) && File.Exists(path)) File.Delete(path);
+            }
+            catch { }
         }
 
         private static string Quote(string value)
@@ -605,23 +612,9 @@ namespace VMessPro.Win
             return "\"" + (value ?? string.Empty).Replace("\"", "\\\"") + "\"";
         }
 
-        private static string Value(Dictionary<string, object> map, string key)
-        {
-            if (map == null) return string.Empty;
-            object value;
-            return map.TryGetValue(key, out value) && value != null ? Convert.ToString(value) : string.Empty;
-        }
-
         public void Dispose()
         {
             try { DisconnectInternalAsync(false).GetAwaiter().GetResult(); } catch { }
-        }
-
-        public sealed class ProfileMeta
-        {
-            public string Protocol { get; set; }
-            public string Name { get; set; }
-            public string Host { get; set; }
         }
 
         private sealed class ProcessResult
