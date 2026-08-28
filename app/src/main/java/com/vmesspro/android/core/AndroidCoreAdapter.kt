@@ -12,16 +12,21 @@ import com.vmesspro.android.data.preferences.VpnPreferencesRepository
 import java.net.InetSocketAddress
 import java.net.Socket
 import kotlin.system.measureTimeMillis
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class AndroidCoreAdapter(context: Context) : CoreAdapter, AutoCloseable {
     private val appContext = context.applicationContext
     private val preferencesRepository = VpnPreferencesRepository(appContext)
+    private val adapterScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val database = Room.databaseBuilder(appContext, AppDatabase::class.java, "vmesspro.db")
         .fallbackToDestructiveMigration()
         .build()
@@ -52,9 +57,18 @@ class AndroidCoreAdapter(context: Context) : CoreAdapter, AutoCloseable {
                         CoreContract.STATE_PREPARING -> ConnectionState.Preparing
                         CoreContract.STATE_CONNECTING -> ConnectionState.Connecting
                         CoreContract.STATE_VERIFYING -> ConnectionState.Verifying
-                        CoreContract.STATE_CONNECTED -> ConnectionState.Connected(
-                            intent.getLongExtra(CoreContract.EXTRA_SINCE, System.currentTimeMillis())
-                        )
+                        CoreContract.STATE_CONNECTED -> {
+                            intent.getStringExtra(CoreContract.EXTRA_PROFILE_ID)
+                                ?.takeIf { it.isNotBlank() }
+                                ?.let { activeProfileId ->
+                                    adapterScope.launch {
+                                        preferencesRepository.setSelectedNode(activeProfileId)
+                                    }
+                                }
+                            ConnectionState.Connected(
+                                intent.getLongExtra(CoreContract.EXTRA_SINCE, System.currentTimeMillis())
+                            )
+                        }
                         CoreContract.STATE_RECONNECTING -> ConnectionState.Reconnecting
                         CoreContract.STATE_ERROR -> ConnectionState.Error(
                             intent.getStringExtra(CoreContract.EXTRA_REASON) ?: "خطای نامشخص Core"
@@ -145,6 +159,7 @@ class AndroidCoreAdapter(context: Context) : CoreAdapter, AutoCloseable {
 
     override fun close() {
         runCatching { appContext.unregisterReceiver(stateReceiver) }
+        adapterScope.cancel()
         database.close()
     }
 
