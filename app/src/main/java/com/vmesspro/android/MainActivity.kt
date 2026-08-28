@@ -6,7 +6,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vmesspro.android.ui.AppViewModel
-import com.vmesspro.android.ui.LiveAppRoot
+import com.vmesspro.android.ui.PolishedAppRoot
 import com.vmesspro.android.ui.theme.VMessProTheme
 
 class MainActivity : ComponentActivity() {
@@ -16,7 +16,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             VMessProTheme {
                 val appViewModel: AppViewModel = viewModel()
-                LiveAppRoot(appViewModel)
+                PolishedAppRoot(appViewModel)
             }
         }
     }
