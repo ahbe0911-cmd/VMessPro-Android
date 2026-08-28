@@ -2,7 +2,7 @@ name: Android Build
 
 on:
   push:
-    branches: [ main, develop, 'fix/**' ]
+    branches: [ main, develop, 'fix/**', 'refactor/**' ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 60
 
     env:
-      SING_BOX_VERSION: v1.13.19
+      LIBXRAY_COMMIT: e8cc06d7427251fa549093e7cc32c28b0f5fbafa
       ANDROID_NDK_VERSION: 28.0.13004108
 
     steps:
@@ -38,42 +38,44 @@ jobs:
       - name: Install Android SDK 36 and NDK r28
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;${ANDROID_NDK_VERSION}"
 
-      - name: Set up Go 1.24.7
+      - name: Set up Go 1.26
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.7'
+          go-version: '1.26.x'
           cache: false
 
-      - name: Restore libbox cache
-        id: libbox-cache
+      - name: Restore libXray cache
+        id: libxray-cache
         uses: actions/cache/restore@v4
         with:
-          path: app/libs/libbox.aar
-          key: libbox-${{ runner.os }}-${{ env.SING_BOX_VERSION }}-ndk-${{ env.ANDROID_NDK_VERSION }}-go-1.24.7
+          path: app/libs/libxray.aar
+          key: libxray-${{ runner.os }}-${{ env.LIBXRAY_COMMIT }}-ndk-${{ env.ANDROID_NDK_VERSION }}-go-1.26
 
-      - name: Build sing-box libbox AAR
-        if: steps.libbox-cache.outputs.cache-hit != 'true'
+      - name: Build Amnezia libXray AAR
+        if: steps.libxray-cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf sing-box-src
-          git clone --depth 1 --branch "${SING_BOX_VERSION}" https://github.com/SagerNet/sing-box.git sing-box-src
-          cd sing-box-src
-          make lib_install
-          export PATH="$(go env GOPATH)/bin:${PATH}"
+          rm -rf amnezia-libxray-src
+          git clone https://github.com/amnezia-vpn/amnezia-libxray.git amnezia-libxray-src
+          cd amnezia-libxray-src
+          git checkout --detach "${LIBXRAY_COMMIT}"
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
-          make lib_android
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+          chmod +x build.sh
+          ./build.sh android
+          test -s libxray.aar
           cd ..
           mkdir -p app/libs
-          cp sing-box-src/libbox.aar app/libs/libbox.aar
-          test -s app/libs/libbox.aar
+          cp amnezia-libxray-src/libxray.aar app/libs/libxray.aar
+          test -s app/libs/libxray.aar
 
-      - name: Save libbox cache
-        if: steps.libbox-cache.outputs.cache-hit != 'true'
+      - name: Save libXray cache
+        if: steps.libxray-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: app/libs/libbox.aar
-          key: libbox-${{ runner.os }}-${{ env.SING_BOX_VERSION }}-ndk-${{ env.ANDROID_NDK_VERSION }}-go-1.24.7
+          path: app/libs/libxray.aar
+          key: libxray-${{ runner.os }}-${{ env.LIBXRAY_COMMIT }}-ndk-${{ env.ANDROID_NDK_VERSION }}-go-1.26
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -117,7 +119,7 @@ jobs:
       - name: Upload compact APKs
         uses: actions/upload-artifact@v4
         with:
-          name: VMessPro-compact-apks
+          name: VMessPro-xray-compact-apks
           path: app/build/outputs/apk/compact/*.apk
           if-no-files-found: error
           retention-days: 14
