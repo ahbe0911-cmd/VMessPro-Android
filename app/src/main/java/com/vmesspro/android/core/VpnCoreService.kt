@@ -56,6 +56,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -77,7 +78,6 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler, Co
     private var tunnel: ParcelFileDescriptor? = null
     private var connectedSince: Long = 0L
     private var activeHistoryId: Long? = null
-    private var currentNodeId: String? = null
 
     @Volatile private var latestUplink: Long = 0L
     @Volatile private var latestDownlink: Long = 0L
@@ -112,10 +112,9 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler, Co
                 val request = ConnectRequest.from(intent, packageName)
                 scope.launch {
                     connectionMutex.withLock {
-                        runCatching { connectLocked(request) }
+                        runCatching { connectWithFailoverLocked(request) }
                             .onFailure { error ->
-                                Log.e(TAG, "Core connect failed", error)
-                                markNodeFailure(request.profileId)
+                                Log.e(TAG, "All VPN candidates failed", error)
                                 sendState(CoreContract.STATE_ERROR, error.message ?: "خطای Core")
                                 updateNotification("اتصال ناموفق بود", false)
                                 shutdownLocked(
@@ -162,6 +161,40 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler, Co
         super.onDestroy()
     }
 
+    private suspend fun connectWithFailoverLocked(request: ConnectRequest) {
+        val candidates = request.candidateProfileIds
+            .ifEmpty { listOf(request.profileId) }
+            .distinct()
+            .take(MAX_FAILOVER_ATTEMPTS)
+        var lastFailure: Throwable? = null
+
+        candidates.forEachIndexed { index, profileId ->
+            if (index > 0) {
+                sendState(CoreContract.STATE_RECONNECTING)
+                updateNotification("تلاش با سرور جایگزین ${index + 1}/${candidates.size}…", false)
+                delay(failoverDelayMillis(index))
+            }
+
+            val candidate = request.copy(profileId = profileId)
+            val attempt = runCatching { connectLocked(candidate) }
+            if (attempt.isSuccess) return
+
+            val error = attempt.exceptionOrNull() ?: IllegalStateException("Unknown VPN failure")
+            lastFailure = error
+            Log.w(TAG, "VPN candidate failed: $profileId", error)
+            markNodeFailure(profileId)
+            shutdownLocked(
+                closeNative = true,
+                broadcast = false,
+                stopService = false,
+                historyStatus = "FAILED",
+                failureReason = error.message ?: "Connection failed",
+            )
+        }
+
+        throw lastFailure ?: IllegalStateException("هیچ سرور جایگزینی برای اتصال وجود ندارد")
+    }
+
     private suspend fun connectLocked(request: ConnectRequest) {
         shutdownLocked(
             closeNative = true,
@@ -173,7 +206,6 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler, Co
 
         check(prepare(this) == null) { "مجوز VPN صادر نشده است" }
         val node = database.nodeDao().getById(request.profileId) ?: error("سرور انتخاب‌شده پیدا نشد")
-        currentNodeId = node.stableId
         activeHistoryId = database.connectionHistoryDao().insert(
             ConnectionHistoryEntity(
                 nodeId = node.stableId,
@@ -231,7 +263,7 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler, Co
                 )
             )
         )
-        sendState(CoreContract.STATE_CONNECTED, since = connectedSince)
+        sendState(CoreContract.STATE_CONNECTED, since = connectedSince, profileId = node.stableId)
         updateNotification("VPN متصل است • ${node.name}", true)
     }
 
@@ -312,7 +344,6 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler, Co
             }.onFailure { Log.w(TAG, "failed to persist connection history", it) }
         }
         activeHistoryId = null
-        currentNodeId = null
         resetTelemetry()
         sendTelemetry()
 
@@ -551,7 +582,6 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler, Co
         manager.notify(notification.identifier, notification.typeID, item)
     }
 
-    // CommandClientHandler: sing-box status stream provides real traffic counters and active connections.
     override fun connected() {
         Log.d(TAG, "libbox telemetry connected")
     }
@@ -585,12 +615,18 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler, Co
 
     override fun writeConnectionEvents(events: ConnectionEvents?) = Unit
 
-    private fun sendState(state: String, reason: String? = null, since: Long = 0L) {
+    private fun sendState(
+        state: String,
+        reason: String? = null,
+        since: Long = 0L,
+        profileId: String? = null,
+    ) {
         sendBroadcast(
             Intent(CoreContract.ACTION_STATE).setPackage(packageName).apply {
                 putExtra(CoreContract.EXTRA_STATE, state)
                 putExtra(CoreContract.EXTRA_REASON, reason)
                 if (since > 0L) putExtra(CoreContract.EXTRA_SINCE, since)
+                if (!profileId.isNullOrBlank()) putExtra(CoreContract.EXTRA_PROFILE_ID, profileId)
             }
         )
     }
@@ -670,6 +706,7 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler, Co
 
     private data class ConnectRequest(
         val profileId: String,
+        val candidateProfileIds: List<String>,
         val splitMode: SplitTunnelMode,
         val includedPackages: Set<String>,
         val excludedPackages: Set<String>,
@@ -693,8 +730,18 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler, Co
                     excluded += banking
                     excluded -= ownPackage
                 }
+                val profileId = requireNotNull(intent.getStringExtra(CoreContract.EXTRA_PROFILE_ID)) {
+                    "profile id is missing"
+                }
+                val candidates = intent
+                    .getStringArrayListExtra(CoreContract.EXTRA_CANDIDATE_IDS)
+                    .orEmpty()
+                    .filter { it.isNotBlank() }
+                    .toMutableList()
+                    .apply { if (profileId !in this) add(0, profileId) }
                 return ConnectRequest(
-                    profileId = requireNotNull(intent.getStringExtra(CoreContract.EXTRA_PROFILE_ID)) { "profile id is missing" },
+                    profileId = profileId,
+                    candidateProfileIds = candidates,
                     splitMode = mode,
                     includedPackages = included,
                     excludedPackages = excluded,
@@ -704,10 +751,18 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler, Co
         }
     }
 
+    private fun failoverDelayMillis(attemptIndex: Int): Long = when (attemptIndex) {
+        1 -> 350L
+        2 -> 800L
+        3 -> 1_500L
+        else -> 2_500L
+    }
+
     companion object {
         private const val TAG = "VpnCoreService"
         private const val VPN_CHANNEL = "vpn_core"
         private const val CORE_EVENT_CHANNEL = "vpn_core_events"
         private const val NOTIFICATION_ID = 4101
+        private const val MAX_FAILOVER_ATTEMPTS = 5
     }
 }
