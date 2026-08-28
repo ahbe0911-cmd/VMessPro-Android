@@ -245,16 +245,16 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                         },
                         label = "premium-screen",
                         modifier = Modifier.fillMaxSize(),
-                    ) { _ ->
-                        when (overlay) {
-                            OverlayRoute.Import -> ImportScreen(
+                    ) { destination ->
+                        when (destination) {
+                            OverlayRoute.Import.name -> ImportScreen(
                                 onImport = viewModel::importText,
                                 onDone = {
                                     overlay = null
                                     selectedTab = AppTab.Servers.ordinal
                                 },
                             )
-                            OverlayRoute.SplitTunnel -> SplitTunnelScreen(
+                            OverlayRoute.SplitTunnel.name -> SplitTunnelScreen(
                                 preferences = preferences,
                                 apps = installedApps,
                                 loading = appsLoading,
@@ -262,7 +262,13 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                                 onModeChange = viewModel::setSplitMode,
                                 onTogglePackage = viewModel::toggleSplitPackage,
                             )
-                            null -> when (AppTab.entries[selectedTab]) {
+                            else -> when (
+                                AppTab.entries[
+                                    destination.removePrefix("tab-").toIntOrNull()
+                                        ?.coerceIn(AppTab.entries.indices)
+                                        ?: AppTab.Home.ordinal
+                                ]
+                            ) {
                                 AppTab.Home -> HomeScreen(
                                     state = connectionState,
                                     selectedNode = selectedNode,
