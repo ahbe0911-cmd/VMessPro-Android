@@ -1,6 +1,6 @@
 package com.vmesspro.android.ui
 
-import android.app.Activity
+import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.RepeatMode
@@ -52,7 +52,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -99,7 +98,7 @@ internal fun PremiumHomeScreen(
         publicIp = if (connected) premiumFetchPublicIp() else null
     }
 
-    val activity = LocalContext.current as? Activity
+    val activity = LocalActivity.current
     val windowClass = activity?.let { calculateWindowSizeClass(it) }
 
     BoxWithConstraints(
