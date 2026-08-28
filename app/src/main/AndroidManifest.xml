@@ -44,7 +44,7 @@
             </intent-filter>
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Encrypted VPN tunnel using sing-box/libbox" />
+                android:value="Encrypted VPN tunnel using Xray-core and tun2socks" />
         </service>
 
     </application>
