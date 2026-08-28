@@ -172,7 +172,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (preview.profiles.isNotEmpty()) {
             viewModelScope.launch(Dispatchers.IO) {
                 runCatching {
-                    database.nodeDao().upsert(preview.profiles.map { it.toNodeEntity(subscriptionId = null) })
+                    database.withTransaction {
+                        val entities = preview.profiles.map { profile ->
+                            val previous = database.nodeDao().getById(profile.stableId)
+                            profile.toNodeEntity(subscriptionId = null, previous = previous)
+                        }
+                        database.nodeDao().upsert(entities)
+                    }
                 }.onSuccess {
                     events.emit("${preview.profiles.size} سرور با موفقیت ذخیره شد")
                 }.onFailure {
@@ -305,50 +311,65 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val preview = BulkImportParser.parse(response.body)
         require(preview.profiles.isNotEmpty()) { "هیچ کانفیگ معتبری در اشتراک پیدا نشد" }
         val now = System.currentTimeMillis()
-        val old = database.subscriptionDao().getById(id)
-        val entities = preview.profiles.map { it.toNodeEntity(subscriptionId = id) }
-        database.withTransaction {
+        val oldSubscription = database.subscriptionDao().getById(id)
+
+        return database.withTransaction {
+            val existingNodes = database.nodeDao().getBySubscription(id).associateBy { it.stableId }
+            val entities = preview.profiles.map { profile ->
+                profile.toNodeEntity(
+                    subscriptionId = id,
+                    previous = existingNodes[profile.stableId],
+                )
+            }
+
             database.nodeDao().upsert(entities)
             database.nodeDao().deleteMissingFromSubscription(id, entities.map { it.stableId })
             database.subscriptionDao().upsert(
                 SubscriptionEntity(
                     id = id,
                     name = name,
-                    encryptedUrl = old?.encryptedUrl ?: secureStore.encrypt(url),
-                    enabled = old?.enabled ?: true,
-                    autoRefresh = old?.autoRefresh ?: true,
+                    encryptedUrl = oldSubscription?.encryptedUrl ?: secureStore.encrypt(url),
+                    enabled = oldSubscription?.enabled ?: true,
+                    autoRefresh = oldSubscription?.autoRefresh ?: true,
                     etag = response.etag,
                     lastModified = response.lastModified,
-                    usedBytes = old?.usedBytes,
-                    totalBytes = old?.totalBytes,
-                    expiresAt = old?.expiresAt,
+                    usedBytes = oldSubscription?.usedBytes,
+                    totalBytes = oldSubscription?.totalBytes,
+                    expiresAt = oldSubscription?.expiresAt,
                     lastRefreshAt = now,
                     lastRefreshError = null,
-                    createdAt = old?.createdAt ?: now,
+                    createdAt = oldSubscription?.createdAt ?: now,
                     updatedAt = now,
                 )
             )
+            entities.size
         }
-        return entities.size
     }
 
-    private fun ProxyProfile.toNodeEntity(subscriptionId: String?): NodeEntity {
+    /**
+     * Stable IDs let a refreshed subscription replace network configuration without erasing
+     * operational metadata gathered by the client (latency, failures, last-use and creation time).
+     */
+    private fun ProxyProfile.toNodeEntity(
+        subscriptionId: String?,
+        previous: NodeEntity? = null,
+    ): NodeEntity {
         val now = System.currentTimeMillis()
         return NodeEntity(
             stableId = stableId,
             subscriptionId = subscriptionId,
             name = name,
-            countryCode = null,
+            countryCode = previous?.countryCode,
             protocol = protocol.name,
             host = server,
             port = port,
             encryptedConfig = secureStore.encrypt(rawUri),
-            lastLatencyMs = null,
-            lastProbeSucceeded = null,
-            consecutiveFailures = 0,
-            lastTestedAt = null,
-            lastUsedAt = null,
-            createdAt = now,
+            lastLatencyMs = previous?.lastLatencyMs,
+            lastProbeSucceeded = previous?.lastProbeSucceeded,
+            consecutiveFailures = previous?.consecutiveFailures ?: 0,
+            lastTestedAt = previous?.lastTestedAt,
+            lastUsedAt = previous?.lastUsedAt,
+            createdAt = previous?.createdAt ?: now,
             updatedAt = now,
         )
     }
