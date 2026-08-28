@@ -63,7 +63,7 @@ namespace VMessPro.Win
 
             if (connected)
             {
-                SetPowerColors("#10E3FF", "#3EE8A5", "#0879EE", "#78F456");
+                SetPowerColors("#10E3FF", "#3EE8A5", "#0879EE");
                 PowerLabel.Text = "قطع اتصال";
                 SecuritySubText.Text = "فعال";
                 SecuritySubText.Foreground = Brush("#49F0AE");
@@ -72,7 +72,7 @@ namespace VMessPro.Win
             }
             else if (connecting)
             {
-                SetPowerColors("#FFC74A", "#FFD760", "#C67622", "#FFC74A");
+                SetPowerColors("#FFC74A", "#FFD760", "#C67622");
                 PowerLabel.Text = "در حال اتصال…";
                 SecuritySubText.Text = "در حال بررسی";
                 SecuritySubText.Foreground = Brush("#FFC74A");
@@ -81,7 +81,7 @@ namespace VMessPro.Win
             }
             else
             {
-                SetPowerColors("#FF4F65", "#FF7481", "#8B1D58", "#FF4F65");
+                SetPowerColors("#FF4F65", "#FF7481", "#8B1D58");
                 PowerLabel.Text = "اتصال";
                 SecuritySubText.Text = "آماده";
                 SecuritySubText.Foreground = Brush("#C77BFF");
@@ -112,12 +112,12 @@ namespace VMessPro.Win
             StatsUploadText.Text = snapshot.UploadMbps.ToString("0.0", CultureInfo.InvariantCulture) + " Mbps";
         }
 
-        private void SetPowerColors(string outer, string center, string edge, string status)
+        private void SetPowerColors(string outer, string center, string edge)
         {
             PowerOuter.BorderBrush = Brush(outer);
             PowerMid.BorderBrush = Brush("#EEFFFFFF");
             PowerCore.BorderBrush = Brush(outer);
-            PowerCenterStop.Color = Color(outer == null ? Colors.Transparent : (Color)ColorConverter.ConvertFromString(center));
+            PowerCenterStop.Color = (Color)ColorConverter.ConvertFromString(center);
             PowerEdgeStop.Color = (Color)ColorConverter.ConvertFromString(edge);
             PowerGlow.Color = (Color)ColorConverter.ConvertFromString(outer);
         }
