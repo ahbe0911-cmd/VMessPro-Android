@@ -1,0 +1,641 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+using System.Web.Script.Serialization;
+
+namespace VMessPro.Win
+{
+    public sealed class VpnEngine : IDisposable
+    {
+        private const string TunName = "VMessPro";
+        private const string TunGuid = "{30E6A0AA-59A6-4A96-9D18-9B5F5C1A6E51}";
+        private const string TunAddress = "192.168.123.1";
+
+        private readonly string _baseDir;
+        private readonly string _coreDir;
+        private readonly string _runtimeDir;
+        private readonly string _xrayPath;
+        private readonly string _tun2SocksPath;
+        private readonly string _helperPath;
+        private readonly JavaScriptSerializer _json = new JavaScriptSerializer();
+
+        private Process _xray;
+        private Process _tun2Socks;
+        private string _serverIp;
+        private string _gateway;
+        private int _physicalIfIndex;
+        private int _tunIfIndex;
+        private string _tunInterfaceId;
+        private long _previousRx;
+        private long _previousTx;
+        private DateTime _previousTrafficAt;
+
+        public WinVpnState State { get; private set; } = WinVpnState.Disconnected;
+        public ConnectionSnapshot Snapshot { get; private set; } = new ConnectionSnapshot
+        {
+            State = WinVpnState.Disconnected,
+            Message = "آماده برای اتصال"
+        };
+
+        public event Action<ConnectionSnapshot> SnapshotChanged;
+
+        public VpnEngine()
+        {
+            _baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            _coreDir = Path.Combine(_baseDir, "core");
+            _runtimeDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VMessPro", "run");
+            Directory.CreateDirectory(_runtimeDir);
+            _xrayPath = Path.Combine(_coreDir, "xray.exe");
+            _tun2SocksPath = Path.Combine(_coreDir, "tun2socks.exe");
+            _helperPath = Path.Combine(_coreDir, "vmesspro-helper.exe");
+        }
+
+        public bool CoreFilesPresent
+        {
+            get { return File.Exists(_xrayPath) && File.Exists(_tun2SocksPath) && File.Exists(_helperPath) && File.Exists(Path.Combine(_coreDir, "wintun.dll")); }
+        }
+
+        public async Task ConnectAsync(VpnProfile profile)
+        {
+            if (profile == null) throw new ArgumentNullException(nameof(profile));
+            if (!CoreFilesPresent) throw new FileNotFoundException("فایل‌های Core ویندوز کامل نیستند.");
+
+            await DisconnectInternalAsync(false).ConfigureAwait(false);
+            SetState(WinVpnState.Preparing, "در حال آماده‌سازی Xray…");
+
+            try
+            {
+                var meta = await EnsureMetadataAsync(profile).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(meta.Host)) throw new InvalidOperationException("آدرس سرور از کانفیگ استخراج نشد.");
+
+                var endpoint = await ResolveIpv4Async(meta.Host).ConfigureAwait(false);
+                _serverIp = endpoint.ToString();
+                var route = FindDefaultRoute();
+                _gateway = route.Gateway;
+                _physicalIfIndex = route.InterfaceIndex;
+
+                var socksPort = GetFreePort();
+                var httpPort = GetFreePort();
+                var rawPath = Path.Combine(_runtimeDir, "active-share.txt");
+                var configPath = Path.Combine(_runtimeDir, "active-xray.json");
+                File.WriteAllText(rawPath, profile.RawLink.Trim(), new UTF8Encoding(false));
+
+                var helper = await RunProcessCaptureAsync(
+                    _helperPath,
+                    "build " + Quote(rawPath) + " " + Quote(configPath) + " " + socksPort + " " + httpPort + " " + Quote(_serverIp),
+                    _coreDir,
+                    15000).ConfigureAwait(false);
+                if (helper.ExitCode != 0) throw new InvalidOperationException("تبدیل کانفیگ ناموفق بود: " + helper.Error);
+
+                SetState(WinVpnState.Connecting, "در حال راه‌اندازی Xray…");
+                _xray = StartHidden(_xrayPath, "run -c " + Quote(configPath), _coreDir);
+                await WaitForTcpPortAsync(httpPort, 5000).ConfigureAwait(false);
+
+                SetState(WinVpnState.Verifying, "در حال تست واقعی کانفیگ…");
+                var proxyLatency = await VerifyThroughHttpProxyAsync(httpPort).ConfigureAwait(false);
+                profile.LatencyMs = proxyLatency;
+                profile.LastSuccess = true;
+
+                _tun2Socks = StartHidden(
+                    _tun2SocksPath,
+                    "--device " + Quote("tun://" + TunName + "?guid=" + TunGuid) +
+                    " --proxy " + Quote("socks5://127.0.0.1:" + socksPort) +
+                    " --mtu 1500 --loglevel warning",
+                    _coreDir);
+
+                var tun = await WaitForTunInterfaceAsync(7000).ConfigureAwait(false);
+                _tunIfIndex = tun.GetIPProperties().GetIPv4Properties().Index;
+                _tunInterfaceId = tun.Id;
+
+                RunNetsh("interface ipv4 set address name=" + Quote(TunName) + " source=static address=" + TunAddress + " mask=255.255.255.0 gateway=none");
+                RunNetsh("interface ipv4 set dnsservers name=" + Quote(TunName) + " source=static address=1.1.1.1 register=none validate=no");
+
+                AddRoute(_serverIp, "255.255.255.255", _gateway, 1, _physicalIfIndex);
+                AddRoute("0.0.0.0", "128.0.0.0", TunAddress, 5, _tunIfIndex);
+                AddRoute("128.0.0.0", "128.0.0.0", TunAddress, 5, _tunIfIndex);
+
+                var systemLatency = await VerifySystemTunnelAsync().ConfigureAwait(false);
+                var publicIp = await FetchPublicIpAsync().ConfigureAwait(false);
+                profile.LatencyMs = systemLatency;
+
+                ResetTrafficBaseline();
+                SetState(
+                    WinVpnState.Connected,
+                    "متصل و تأییدشده",
+                    systemLatency,
+                    publicIp,
+                    DateTime.Now);
+            }
+            catch (Exception ex)
+            {
+                await DisconnectInternalAsync(false).ConfigureAwait(false);
+                SetState(WinVpnState.Error, "خطا: " + ex.Message);
+                throw;
+            }
+        }
+
+        public async Task DisconnectAsync()
+        {
+            await DisconnectInternalAsync(true).ConfigureAwait(false);
+        }
+
+        public async Task<int> TestProfileAsync(VpnProfile profile)
+        {
+            if (profile == null) throw new ArgumentNullException(nameof(profile));
+            if (State == WinVpnState.Connected || State == WinVpnState.Connecting || State == WinVpnState.Verifying)
+                throw new InvalidOperationException("برای تست مستقل سرورها ابتدا VPN را قطع کنید.");
+
+            var meta = await EnsureMetadataAsync(profile).ConfigureAwait(false);
+            var endpoint = await ResolveIpv4Async(meta.Host).ConfigureAwait(false);
+            var socksPort = GetFreePort();
+            var httpPort = GetFreePort();
+            var token = Guid.NewGuid().ToString("N");
+            var rawPath = Path.Combine(_runtimeDir, "test-" + token + ".txt");
+            var configPath = Path.Combine(_runtimeDir, "test-" + token + ".json");
+            File.WriteAllText(rawPath, profile.RawLink.Trim(), new UTF8Encoding(false));
+
+            Process process = null;
+            try
+            {
+                var helper = await RunProcessCaptureAsync(
+                    _helperPath,
+                    "build " + Quote(rawPath) + " " + Quote(configPath) + " " + socksPort + " " + httpPort + " " + Quote(endpoint.ToString()),
+                    _coreDir,
+                    15000).ConfigureAwait(false);
+                if (helper.ExitCode != 0) throw new InvalidOperationException(helper.Error);
+                process = StartHidden(_xrayPath, "run -c " + Quote(configPath), _coreDir);
+                await WaitForTcpPortAsync(httpPort, 5000).ConfigureAwait(false);
+                var latency = await VerifyThroughHttpProxyAsync(httpPort).ConfigureAwait(false);
+                profile.LatencyMs = latency;
+                profile.LastSuccess = true;
+                return latency;
+            }
+            catch
+            {
+                profile.LastSuccess = false;
+                throw;
+            }
+            finally
+            {
+                KillQuietly(process);
+                TryDelete(rawPath);
+                TryDelete(configPath);
+            }
+        }
+
+        public async Task<List<VpnProfile>> NormalizeImportAsync(string input)
+        {
+            if (string.IsNullOrWhiteSpace(input)) return new List<VpnProfile>();
+            var text = input.Trim();
+            if ((text.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || text.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) && !text.Contains("\n"))
+            {
+                using (var client = new WebClient())
+                {
+                    client.Headers[HttpRequestHeader.UserAgent] = "VMessPro-Windows/0.6";
+                    text = await client.DownloadStringTaskAsync(text).ConfigureAwait(false);
+                }
+            }
+
+            var token = Guid.NewGuid().ToString("N");
+            var inputPath = Path.Combine(_runtimeDir, "import-" + token + ".txt");
+            var outputPath = Path.Combine(_runtimeDir, "normalized-" + token + ".txt");
+            File.WriteAllText(inputPath, text, new UTF8Encoding(false));
+            try
+            {
+                var result = await RunProcessCaptureAsync(_helperPath, "normalize " + Quote(inputPath) + " " + Quote(outputPath), _coreDir, 20000).ConfigureAwait(false);
+                if (result.ExitCode != 0) throw new InvalidOperationException("Import: " + result.Error);
+                if (!File.Exists(outputPath)) return new List<VpnProfile>();
+
+                var links = File.ReadAllLines(outputPath, Encoding.UTF8)
+                    .Select(v => v.Trim())
+                    .Where(v => !string.IsNullOrWhiteSpace(v))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+
+                var profiles = new List<VpnProfile>();
+                foreach (var link in links)
+                {
+                    var p = new VpnProfile { RawLink = link, Id = ProfileStore.StableId(link) };
+                    try { await EnsureMetadataAsync(p).ConfigureAwait(false); }
+                    catch
+                    {
+                        p.Protocol = link.Split(new[] { "://" }, StringSplitOptions.None)[0].ToUpperInvariant();
+                        p.Name = p.Protocol + " profile";
+                    }
+                    profiles.Add(p);
+                }
+                return profiles;
+            }
+            finally
+            {
+                TryDelete(inputPath);
+                TryDelete(outputPath);
+            }
+        }
+
+        public ConnectionSnapshot PollTraffic()
+        {
+            if (State != WinVpnState.Connected || string.IsNullOrWhiteSpace(_tunInterfaceId)) return Snapshot;
+            try
+            {
+                var nic = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(n => string.Equals(n.Id, _tunInterfaceId, StringComparison.OrdinalIgnoreCase));
+                if (nic == null) return Snapshot;
+                var stats = nic.GetIPv4Statistics();
+                var now = DateTime.UtcNow;
+                var elapsed = Math.Max(0.2, (now - _previousTrafficAt).TotalSeconds);
+                var rx = stats.BytesReceived;
+                var tx = stats.BytesSent;
+                Snapshot.DownloadMbps = Math.Max(0, rx - _previousRx) * 8.0 / elapsed / 1000000.0;
+                Snapshot.UploadMbps = Math.Max(0, tx - _previousTx) * 8.0 / elapsed / 1000000.0;
+                _previousRx = rx;
+                _previousTx = tx;
+                _previousTrafficAt = now;
+                SnapshotChanged?.Invoke(Snapshot);
+            }
+            catch { }
+            return Snapshot;
+        }
+
+        public async Task<ProfileMeta> EnsureMetadataAsync(VpnProfile profile)
+        {
+            if (!string.IsNullOrWhiteSpace(profile.Host) && !string.IsNullOrWhiteSpace(profile.Protocol) && !string.IsNullOrWhiteSpace(profile.Name))
+                return new ProfileMeta { Host = profile.Host, Name = profile.Name, Protocol = profile.Protocol };
+
+            var path = Path.Combine(_runtimeDir, "meta-" + Guid.NewGuid().ToString("N") + ".txt");
+            File.WriteAllText(path, profile.RawLink.Trim(), new UTF8Encoding(false));
+            try
+            {
+                var result = await RunProcessCaptureAsync(_helperPath, "meta " + Quote(path), _coreDir, 12000).ConfigureAwait(false);
+                if (result.ExitCode != 0) throw new InvalidOperationException(result.Error);
+                var map = _json.Deserialize<Dictionary<string, object>>(result.Output);
+                var meta = new ProfileMeta
+                {
+                    Protocol = Value(map, "protocol").ToUpperInvariant(),
+                    Name = Value(map, "name"),
+                    Host = Value(map, "host")
+                };
+                profile.Protocol = string.IsNullOrWhiteSpace(meta.Protocol) ? "XRAY" : meta.Protocol;
+                profile.Name = string.IsNullOrWhiteSpace(meta.Name) ? profile.Protocol : meta.Name;
+                profile.Host = meta.Host;
+                return meta;
+            }
+            finally
+            {
+                TryDelete(path);
+            }
+        }
+
+        private async Task DisconnectInternalAsync(bool broadcast)
+        {
+            DeleteRoute("0.0.0.0", "128.0.0.0", TunAddress, _tunIfIndex);
+            DeleteRoute("128.0.0.0", "128.0.0.0", TunAddress, _tunIfIndex);
+            if (!string.IsNullOrWhiteSpace(_serverIp) && !string.IsNullOrWhiteSpace(_gateway))
+                DeleteRoute(_serverIp, "255.255.255.255", _gateway, _physicalIfIndex);
+
+            KillQuietly(_tun2Socks);
+            KillQuietly(_xray);
+            _tun2Socks = null;
+            _xray = null;
+            _serverIp = null;
+            _gateway = null;
+            _physicalIfIndex = 0;
+            _tunIfIndex = 0;
+            _tunInterfaceId = null;
+            await Task.Delay(60).ConfigureAwait(false);
+            if (broadcast) SetState(WinVpnState.Disconnected, "قطع • آماده برای اتصال");
+        }
+
+        private async Task<int> VerifyThroughHttpProxyAsync(int httpPort)
+        {
+            Exception last = null;
+            foreach (var endpoint in new[] { "https://www.gstatic.com/generate_204", "https://cp.cloudflare.com/generate_204" })
+            {
+                try
+                {
+                    var sw = Stopwatch.StartNew();
+                    var request = (HttpWebRequest)WebRequest.Create(endpoint);
+                    request.Proxy = new WebProxy("http://127.0.0.1:" + httpPort);
+                    request.Timeout = 4000;
+                    request.ReadWriteTimeout = 4000;
+                    request.AllowAutoRedirect = false;
+                    request.KeepAlive = false;
+                    request.UserAgent = "VMessPro-Windows/0.6";
+                    using (var response = (HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false))
+                    {
+                        sw.Stop();
+                        var code = (int)response.StatusCode;
+                        if (code == 204 || (code >= 200 && code < 400)) return Math.Max(1, (int)sw.ElapsedMilliseconds);
+                    }
+                }
+                catch (Exception ex) { last = ex; }
+            }
+            throw new InvalidOperationException("Xray اجرا شد ولی HTTPS واقعی از کانفیگ عبور نکرد.", last);
+        }
+
+        private async Task<int> VerifySystemTunnelAsync()
+        {
+            Exception last = null;
+            foreach (var endpoint in new[] { "https://www.gstatic.com/generate_204", "https://cp.cloudflare.com/generate_204" })
+            {
+                try
+                {
+                    var sw = Stopwatch.StartNew();
+                    var request = (HttpWebRequest)WebRequest.Create(endpoint);
+                    request.Proxy = null;
+                    request.Timeout = 4500;
+                    request.ReadWriteTimeout = 4500;
+                    request.AllowAutoRedirect = false;
+                    request.KeepAlive = false;
+                    request.UserAgent = "VMessPro-Windows/0.6";
+                    using (var response = (HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false))
+                    {
+                        sw.Stop();
+                        var code = (int)response.StatusCode;
+                        if (code == 204 || (code >= 200 && code < 400)) return Math.Max(1, (int)sw.ElapsedMilliseconds);
+                    }
+                }
+                catch (Exception ex) { last = ex; }
+            }
+            throw new InvalidOperationException("TUN ساخته شد اما ترافیک واقعی ویندوز از VPN عبور نکرد.", last);
+        }
+
+        private async Task<string> FetchPublicIpAsync()
+        {
+            foreach (var endpoint in new[] { "https://api.ipify.org", "https://checkip.amazonaws.com" })
+            {
+                try
+                {
+                    var request = (HttpWebRequest)WebRequest.Create(endpoint);
+                    request.Proxy = null;
+                    request.Timeout = 4000;
+                    request.ReadWriteTimeout = 4000;
+                    request.KeepAlive = false;
+                    using (var response = (HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false))
+                    using (var reader = new StreamReader(response.GetResponseStream()))
+                    {
+                        var text = (await reader.ReadToEndAsync().ConfigureAwait(false)).Trim();
+                        if (!string.IsNullOrWhiteSpace(text)) return text;
+                    }
+                }
+                catch { }
+            }
+            return "—";
+        }
+
+        private async Task WaitForTcpPortAsync(int port, int timeoutMs)
+        {
+            var started = Stopwatch.StartNew();
+            Exception last = null;
+            while (started.ElapsedMilliseconds < timeoutMs)
+            {
+                try
+                {
+                    using (var client = new TcpClient())
+                    {
+                        var connect = client.ConnectAsync(IPAddress.Loopback, port);
+                        var completed = await Task.WhenAny(connect, Task.Delay(180)).ConfigureAwait(false);
+                        if (completed == connect && client.Connected) return;
+                    }
+                }
+                catch (Exception ex) { last = ex; }
+                await Task.Delay(80).ConfigureAwait(false);
+            }
+            throw new TimeoutException("Xray local proxy آماده نشد.", last);
+        }
+
+        private async Task<NetworkInterface> WaitForTunInterfaceAsync(int timeoutMs)
+        {
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < timeoutMs)
+            {
+                var found = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(n =>
+                    string.Equals(n.Name, TunName, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(n.Name, "wintun", StringComparison.OrdinalIgnoreCase) ||
+                    (n.Description ?? string.Empty).IndexOf("Wintun", StringComparison.OrdinalIgnoreCase) >= 0);
+                if (found != null) return found;
+                await Task.Delay(120).ConfigureAwait(false);
+            }
+            throw new TimeoutException("Wintun interface ساخته نشد.");
+        }
+
+        private DefaultRoute FindDefaultRoute()
+        {
+            var output = RunProcessCapture("route.exe", "PRINT -4", Environment.SystemDirectory, 6000).Output;
+            var matches = Regex.Matches(
+                output,
+                @"(?m)^\s*0\.0\.0\.0\s+0\.0\.0\.0\s+(?<gw>\d{1,3}(?:\.\d{1,3}){3})\s+(?<iface>\d{1,3}(?:\.\d{1,3}){3})\s+(?<metric>\d+)\s*$");
+            if (matches.Count == 0) throw new InvalidOperationException("Default IPv4 route پیدا نشد.");
+
+            var candidates = matches.Cast<Match>()
+                .Select(m => new { Gateway = m.Groups["gw"].Value, InterfaceIp = m.Groups["iface"].Value, Metric = int.Parse(m.Groups["metric"].Value) })
+                .OrderBy(v => v.Metric)
+                .ToList();
+
+            foreach (var item in candidates)
+            {
+                var nic = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(n =>
+                    n.OperationalStatus == OperationalStatus.Up &&
+                    n.GetIPProperties().UnicastAddresses.Any(a => a.Address.AddressFamily == AddressFamily.InterNetwork && a.Address.ToString() == item.InterfaceIp));
+                if (nic == null) continue;
+                var index = nic.GetIPProperties().GetIPv4Properties().Index;
+                return new DefaultRoute { Gateway = item.Gateway, InterfaceIndex = index, InterfaceName = nic.Name };
+            }
+            throw new InvalidOperationException("رابط شبکه اصلی شناسایی نشد.");
+        }
+
+        private async Task<IPAddress> ResolveIpv4Async(string host)
+        {
+            return await Task.Run(() =>
+            {
+                IPAddress literal;
+                if (IPAddress.TryParse(host, out literal) && literal.AddressFamily == AddressFamily.InterNetwork) return literal;
+                var address = Dns.GetHostAddresses(host).FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork);
+                if (address == null) throw new InvalidOperationException("IPv4 سرور Resolve نشد: " + host);
+                return address;
+            }).ConfigureAwait(false);
+        }
+
+        private void ResetTrafficBaseline()
+        {
+            try
+            {
+                var nic = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(n => string.Equals(n.Id, _tunInterfaceId, StringComparison.OrdinalIgnoreCase));
+                if (nic != null)
+                {
+                    var stats = nic.GetIPv4Statistics();
+                    _previousRx = stats.BytesReceived;
+                    _previousTx = stats.BytesSent;
+                }
+            }
+            catch
+            {
+                _previousRx = 0;
+                _previousTx = 0;
+            }
+            _previousTrafficAt = DateTime.UtcNow;
+        }
+
+        private void SetState(WinVpnState state, string message, int? latency = null, string publicIp = null, DateTime? since = null)
+        {
+            State = state;
+            Snapshot.State = state;
+            Snapshot.Message = message;
+            if (latency.HasValue) Snapshot.LatencyMs = latency;
+            if (publicIp != null) Snapshot.PublicIp = publicIp;
+            if (since.HasValue) Snapshot.ConnectedSince = since.Value;
+            if (state == WinVpnState.Disconnected || state == WinVpnState.Error)
+            {
+                Snapshot.DownloadMbps = 0;
+                Snapshot.UploadMbps = 0;
+                if (state == WinVpnState.Disconnected) Snapshot.PublicIp = null;
+            }
+            SnapshotChanged?.Invoke(Snapshot);
+        }
+
+        private static int GetFreePort()
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            try { return ((IPEndPoint)listener.LocalEndpoint).Port; }
+            finally { listener.Stop(); }
+        }
+
+        private static Process StartHidden(string file, string args, string workDir)
+        {
+            var start = new ProcessStartInfo(file, args)
+            {
+                WorkingDirectory = workDir,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            var process = Process.Start(start);
+            if (process == null) throw new InvalidOperationException("Process start failed: " + file);
+            return process;
+        }
+
+        private static async Task<ProcessResult> RunProcessCaptureAsync(string file, string args, string workDir, int timeoutMs)
+        {
+            return await Task.Run(() => RunProcessCapture(file, args, workDir, timeoutMs)).ConfigureAwait(false);
+        }
+
+        private static ProcessResult RunProcessCapture(string file, string args, string workDir, int timeoutMs)
+        {
+            var start = new ProcessStartInfo(file, args)
+            {
+                WorkingDirectory = workDir,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8
+            };
+            using (var process = Process.Start(start))
+            {
+                if (process == null) return new ProcessResult { ExitCode = -1, Error = "start failed" };
+                var output = process.StandardOutput.ReadToEnd();
+                var error = process.StandardError.ReadToEnd();
+                if (!process.WaitForExit(timeoutMs))
+                {
+                    try { process.Kill(); } catch { }
+                    return new ProcessResult { ExitCode = -2, Output = output, Error = "timeout: " + error };
+                }
+                return new ProcessResult { ExitCode = process.ExitCode, Output = output, Error = error };
+            }
+        }
+
+        private static void RunNetsh(string args)
+        {
+            var result = RunProcessCapture("netsh.exe", args, Environment.SystemDirectory, 8000);
+            if (result.ExitCode != 0) throw new InvalidOperationException("netsh: " + result.Error + " " + result.Output);
+        }
+
+        private static void AddRoute(string destination, string mask, string gateway, int metric, int ifIndex)
+        {
+            var args = "ADD " + destination + " MASK " + mask + " " + gateway + " METRIC " + metric;
+            if (ifIndex > 0) args += " IF " + ifIndex;
+            var result = RunProcessCapture("route.exe", args, Environment.SystemDirectory, 6000);
+            if (result.ExitCode != 0)
+            {
+                DeleteRoute(destination, mask, gateway, ifIndex);
+                result = RunProcessCapture("route.exe", args, Environment.SystemDirectory, 6000);
+                if (result.ExitCode != 0) throw new InvalidOperationException("route add failed: " + result.Output + result.Error);
+            }
+        }
+
+        private static void DeleteRoute(string destination, string mask, string gateway, int ifIndex)
+        {
+            if (string.IsNullOrWhiteSpace(destination) || string.IsNullOrWhiteSpace(mask) || string.IsNullOrWhiteSpace(gateway)) return;
+            var args = "DELETE " + destination + " MASK " + mask + " " + gateway;
+            if (ifIndex > 0) args += " IF " + ifIndex;
+            try { RunProcessCapture("route.exe", args, Environment.SystemDirectory, 4000); } catch { }
+        }
+
+        private static void KillQuietly(Process process)
+        {
+            if (process == null) return;
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill();
+                    process.WaitForExit(2500);
+                }
+            }
+            catch { }
+            try { process.Dispose(); } catch { }
+        }
+
+        private static void TryDelete(string path)
+        {
+            try { if (!string.IsNullOrWhiteSpace(path) && File.Exists(path)) File.Delete(path); } catch { }
+        }
+
+        private static string Quote(string value)
+        {
+            return "\"" + (value ?? string.Empty).Replace("\"", "\\\"") + "\"";
+        }
+
+        private static string Value(Dictionary<string, object> map, string key)
+        {
+            if (map == null) return string.Empty;
+            object value;
+            return map.TryGetValue(key, out value) && value != null ? Convert.ToString(value) : string.Empty;
+        }
+
+        public void Dispose()
+        {
+            try { DisconnectInternalAsync(false).GetAwaiter().GetResult(); } catch { }
+        }
+
+        public sealed class ProfileMeta
+        {
+            public string Protocol { get; set; }
+            public string Name { get; set; }
+            public string Host { get; set; }
+        }
+
+        private sealed class ProcessResult
+        {
+            public int ExitCode { get; set; }
+            public string Output { get; set; }
+            public string Error { get; set; }
+        }
+
+        private sealed class DefaultRoute
+        {
+            public string Gateway { get; set; }
+            public int InterfaceIndex { get; set; }
+            public string InterfaceName { get; set; }
+        }
+    }
+}
