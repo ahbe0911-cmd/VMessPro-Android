@@ -29,21 +29,42 @@ class AndroidCoreAdapter(context: Context) : CoreAdapter, AutoCloseable {
     private val _state = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     override val state: StateFlow<ConnectionState> = _state.asStateFlow()
 
+    private val _telemetry = MutableStateFlow(VpnTelemetry())
+    override val telemetry: StateFlow<VpnTelemetry> = _telemetry.asStateFlow()
+
     private val stateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action != CoreContract.ACTION_STATE) return
-            _state.value = when (intent.getStringExtra(CoreContract.EXTRA_STATE)) {
-                CoreContract.STATE_PREPARING -> ConnectionState.Preparing
-                CoreContract.STATE_CONNECTING -> ConnectionState.Connecting
-                CoreContract.STATE_VERIFYING -> ConnectionState.Verifying
-                CoreContract.STATE_CONNECTED -> ConnectionState.Connected(
-                    intent.getLongExtra(CoreContract.EXTRA_SINCE, System.currentTimeMillis())
-                )
-                CoreContract.STATE_RECONNECTING -> ConnectionState.Reconnecting
-                CoreContract.STATE_ERROR -> ConnectionState.Error(
-                    intent.getStringExtra(CoreContract.EXTRA_REASON) ?: "خطای نامشخص Core"
-                )
-                else -> ConnectionState.Disconnected
+            when (intent?.action) {
+                CoreContract.ACTION_TELEMETRY -> {
+                    _telemetry.value = VpnTelemetry(
+                        uploadBytesPerSecond = intent.getLongExtra(CoreContract.EXTRA_UPLINK, 0L).coerceAtLeast(0L),
+                        downloadBytesPerSecond = intent.getLongExtra(CoreContract.EXTRA_DOWNLINK, 0L).coerceAtLeast(0L),
+                        uploadedBytesTotal = intent.getLongExtra(CoreContract.EXTRA_UPLINK_TOTAL, 0L).coerceAtLeast(0L),
+                        downloadedBytesTotal = intent.getLongExtra(CoreContract.EXTRA_DOWNLINK_TOTAL, 0L).coerceAtLeast(0L),
+                        activeConnectionsIn = intent.getIntExtra(CoreContract.EXTRA_CONNECTIONS_IN, 0).coerceAtLeast(0),
+                        activeConnectionsOut = intent.getIntExtra(CoreContract.EXTRA_CONNECTIONS_OUT, 0).coerceAtLeast(0),
+                        trafficAvailable = intent.getBooleanExtra(CoreContract.EXTRA_TRAFFIC_AVAILABLE, false),
+                    )
+                }
+
+                CoreContract.ACTION_STATE -> {
+                    _state.value = when (intent.getStringExtra(CoreContract.EXTRA_STATE)) {
+                        CoreContract.STATE_PREPARING -> ConnectionState.Preparing
+                        CoreContract.STATE_CONNECTING -> ConnectionState.Connecting
+                        CoreContract.STATE_VERIFYING -> ConnectionState.Verifying
+                        CoreContract.STATE_CONNECTED -> ConnectionState.Connected(
+                            intent.getLongExtra(CoreContract.EXTRA_SINCE, System.currentTimeMillis())
+                        )
+                        CoreContract.STATE_RECONNECTING -> ConnectionState.Reconnecting
+                        CoreContract.STATE_ERROR -> ConnectionState.Error(
+                            intent.getStringExtra(CoreContract.EXTRA_REASON) ?: "خطای نامشخص Core"
+                        )
+                        else -> ConnectionState.Disconnected
+                    }
+                    if (_state.value is ConnectionState.Disconnected || _state.value is ConnectionState.Error) {
+                        _telemetry.value = VpnTelemetry()
+                    }
+                }
             }
         }
     }
@@ -52,7 +73,10 @@ class AndroidCoreAdapter(context: Context) : CoreAdapter, AutoCloseable {
         ContextCompat.registerReceiver(
             appContext,
             stateReceiver,
-            IntentFilter(CoreContract.ACTION_STATE),
+            IntentFilter().apply {
+                addAction(CoreContract.ACTION_STATE)
+                addAction(CoreContract.ACTION_TELEMETRY)
+            },
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
     }
