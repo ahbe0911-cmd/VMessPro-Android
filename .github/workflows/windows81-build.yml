@@ -2,7 +2,7 @@ name: Windows 8.1 Build
 
 on:
   push:
-    branches: [ main, 'feature/**' ]
+    branches: [ main, 'feature/**', 'fix/**' ]
     paths:
       - 'windows/**'
       - '.github/workflows/windows81-build.yml'
@@ -22,7 +22,7 @@ jobs:
       TUN2SOCKS_VERSION: v2.5.2
       WINTUN_VERSION: 0.14.1
       WINTUN_SHA256: 07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
-      APP_VERSION: 0.6.1
+      APP_VERSION: 0.6.2
 
     steps:
       - name: Checkout
@@ -39,26 +39,18 @@ jobs:
           Invoke-WebRequest 'https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-Regular.ttf' -OutFile windows/VMessPro.Win/Resources/vazirmatn_regular.ttf
           Invoke-WebRequest 'https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-Bold.ttf' -OutFile windows/VMessPro.Win/Resources/vazirmatn_bold.ttf
 
-      - name: Apply Premium 0.6.1 UI and compatibility fix
+      - name: Validate 0.6.2 desktop source
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Copy-Item windows/VMessPro.Win/Premium061.MainWindow.xaml.template windows/VMessPro.Win/MainWindow.xaml -Force
-          Copy-Item windows/VMessPro.Win/Premium061.MainWindow.xaml.cs.template windows/VMessPro.Win/MainWindow.xaml.cs -Force
-
-          $enginePath = 'windows/VMessPro.Win/VpnEngine.cs'
-          $text = Get-Content $enginePath -Raw
-          $old = 'public ParsedShare EnsureMetadata(VpnProfile profile)'
-          $new = 'internal ParsedShare EnsureMetadata(VpnProfile profile)'
-          if (-not $text.Contains($old) -and -not $text.Contains($new)) {
-            throw 'VpnEngine EnsureMetadata signature not found'
-          }
-          if ($text.Contains($old)) {
-            $text = $text.Replace($old, $new)
-            Set-Content -Path $enginePath -Value $text -Encoding UTF8
-          }
-          $verify = Get-Content $enginePath -Raw
-          if (-not $verify.Contains($new)) { throw 'VpnEngine accessibility patch failed' }
+          $xaml = Get-Content windows/VMessPro.Win/MainWindow.xaml -Raw
+          $engine = Get-Content windows/VMessPro.Win/VpnEngine.cs -Raw
+          if (-not $xaml.Contains('VMess Pro 0.6.2')) { throw '0.6.2 title not found in MainWindow.xaml' }
+          if ($xaml.Contains('<ScrollViewer x:Name="HomePage"')) { throw 'HomePage must not be a ScrollViewer' }
+          if (-not $xaml.Contains('PowerButtonStyle')) { throw 'Custom transparent power button template missing' }
+          if (-not $engine.Contains('TunName = "VMessPro"')) { throw 'Dedicated VMessPro Wintun adapter code missing' }
+          if (-not $engine.Contains('interface ipv4 add route 0.0.0.0/0')) { throw 'Windows default Wintun route fix missing' }
+          Write-Host 'Desktop UI and Wintun route fix are present.'
 
       - name: Build WPF app for .NET Framework 4.8
         shell: pwsh
@@ -149,8 +141,11 @@ jobs:
           Run VMessPro.Win.exe as Administrator. Administrator permission is required to create the Wintun interface and Windows routes.
 
           Real connection path:
-          Xray-core (Windows 7 compatible build) -> local SOCKS -> tun2socks -> Wintun -> Windows routes.
+          Xray-core (Windows 7 compatible build) -> local SOCKS -> tun2socks -> VMessPro Wintun -> Windows default route.
           Connected is shown only after real HTTPS verification succeeds.
+
+          Diagnostics on connection failure:
+          %LOCALAPPDATA%\VMessPro\run\windows-tunnel.log
 
           Supported imports:
           VMess, VLESS, VLESS Reality, Trojan, and HTTP/HTTPS subscriptions containing those links.
@@ -179,9 +174,9 @@ jobs:
       - name: Upload Windows 8.1 packages
         uses: actions/upload-artifact@v4
         with:
-          name: VMessPro-Windows81-Premium-0.6.1
+          name: VMessPro-Windows81-UI-TUN-Fix-0.6.2
           path: |
-            dist/VMessPro-Windows81-0.6.1-x64.zip
-            dist/VMessPro-Windows81-0.6.1-x86.zip
+            dist/VMessPro-Windows81-0.6.2-x64.zip
+            dist/VMessPro-Windows81-0.6.2-x86.zip
           if-no-files-found: error
           retention-days: 14
