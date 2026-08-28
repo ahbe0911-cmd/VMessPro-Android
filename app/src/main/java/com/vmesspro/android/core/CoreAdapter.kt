@@ -8,11 +8,22 @@ import kotlinx.coroutines.flow.StateFlow
  */
 interface CoreAdapter {
     val state: StateFlow<ConnectionState>
+    val telemetry: StateFlow<VpnTelemetry>
 
     suspend fun connect(profileId: String)
     suspend fun disconnect()
     suspend fun probe(profileId: String): ProbeResult
 }
+
+data class VpnTelemetry(
+    val uploadBytesPerSecond: Long = 0,
+    val downloadBytesPerSecond: Long = 0,
+    val uploadedBytesTotal: Long = 0,
+    val downloadedBytesTotal: Long = 0,
+    val activeConnectionsIn: Int = 0,
+    val activeConnectionsOut: Int = 0,
+    val trafficAvailable: Boolean = false,
+)
 
 data class ProbeResult(
     val tcpLatencyMs: Long?,
