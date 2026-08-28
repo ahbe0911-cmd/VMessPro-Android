@@ -28,6 +28,7 @@ class AndroidCoreAdapter(context: Context) : CoreAdapter, AutoCloseable {
     private val preferencesRepository = VpnPreferencesRepository(appContext)
     private val adapterScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val database = Room.databaseBuilder(appContext, AppDatabase::class.java, "vmesspro.db")
+        .enableMultiInstanceInvalidation()
         .fallbackToDestructiveMigration()
         .build()
 
