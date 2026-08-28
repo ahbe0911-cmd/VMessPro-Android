@@ -27,7 +27,10 @@ import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -36,6 +39,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 data class InstalledAppInfo(
@@ -148,7 +153,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (_testingAllNodes.value) return
         viewModelScope.launch(Dispatchers.IO) {
             val node = database.nodeDao().getById(id) ?: return@launch
-            val result = coreAdapter.validateProfileTraffic(id)
+            val result = coreAdapter.probe(id)
             val now = System.currentTimeMillis()
             val verifiedLatency = result.httpRttMs ?: result.tcpLatencyMs
             database.nodeDao().upsert(
@@ -163,8 +168,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 )
             )
             events.emit(
-                if (result.success) "تست واقعی موفق: ${verifiedLatency ?: 0} ms"
-                else "ترافیک واقعی از این کانفیگ عبور نکرد"
+                if (result.success) "تست Xray واقعی موفق: ${verifiedLatency ?: 0} ms"
+                else "Xray این کانفیگ نتوانست HTTP واقعی عبور دهد: ${result.error ?: "ناموفق"}"
             )
         }
     }
@@ -180,57 +185,70 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             events.tryEmit("سروری برای تست وجود ندارد")
             return
         }
+        if (connectionState.value !is ConnectionState.Disconnected && connectionState.value !is ConnectionState.Error) {
+            events.tryEmit("برای تست گروهی Xray ابتدا اتصال VPN را قطع کنید")
+            return
+        }
 
         viewModelScope.launch(Dispatchers.IO) {
             _testingAllNodes.value = true
             _testProgress.value = NodeTestProgress(total = snapshot.size)
             try {
-                events.emit("تست واقعی ${snapshot.size} کانفیگ شروع شد؛ هر کانفیگ باید HTTPS واقعی عبور دهد")
-                val updatedNodes = ArrayList<NodeEntity>(snapshot.size)
-                var successfulCount = 0
+                events.emit("تست واقعی Xray برای ${snapshot.size} کانفیگ شروع شد")
+                val semaphore = Semaphore(MAX_PARALLEL_XRAY_TESTS)
+                val completed = AtomicInteger(0)
+                val successful = AtomicInteger(0)
 
-                snapshot.forEachIndexed { index, node ->
-                    val result = coreAdapter.validateProfileTraffic(node.stableId)
-                    val now = System.currentTimeMillis()
+                val results = snapshot.map { node ->
+                    async {
+                        semaphore.withPermit {
+                            val result = coreAdapter.probe(node.stableId)
+                            val done = completed.incrementAndGet()
+                            val ok = if (result.success) successful.incrementAndGet() else successful.get()
+                            _testProgress.value = NodeTestProgress(
+                                completed = done,
+                                total = snapshot.size,
+                                successful = ok,
+                            )
+                            node to result
+                        }
+                    }
+                }.awaitAll()
+
+                val now = System.currentTimeMillis()
+                val updatedNodes = results.map { (node, result) ->
                     val verifiedLatency = result.httpRttMs ?: result.tcpLatencyMs
-                    val updated = node.copy(
+                    node.copy(
                         lastLatencyMs = verifiedLatency ?: node.lastLatencyMs,
                         lastProbeSucceeded = result.success,
                         lastTestedAt = now,
                         consecutiveFailures = if (result.success) 0 else node.consecutiveFailures + 1,
                         updatedAt = now,
                     )
-                    database.nodeDao().upsert(listOf(updated))
-                    updatedNodes += updated
-                    if (result.success) successfulCount += 1
-                    _testProgress.value = NodeTestProgress(
-                        completed = index + 1,
-                        total = snapshot.size,
-                        successful = successfulCount,
-                    )
                 }
+                database.nodeDao().upsert(updatedNodes)
 
                 val successfulNodes = updatedNodes.filter { it.lastProbeSucceeded == true }
+                val successfulCount = successfulNodes.size
                 if (selectBestAfter && successfulNodes.isNotEmpty()) {
-                    val now = System.currentTimeMillis()
                     val best = SmartNodeSelector
                         .order(successfulNodes, preferredId = null, nowEpochMillis = now)
                         .firstOrNull()
                     if (best != null) {
                         preferencesRepository.setSelectedNode(best.stableId)
                         events.emit(
-                            "تست واقعی تمام شد: $successfulCount از ${snapshot.size} سالم • بهترین: ${best.name} • ${best.lastLatencyMs ?: 0} ms"
+                            "تست Xray تمام شد: $successfulCount از ${snapshot.size} سالم • بهترین: ${best.name} • ${best.lastLatencyMs ?: 0} ms"
                         )
                     }
                 } else {
-                    events.emit("تست واقعی تمام شد: $successfulCount از ${snapshot.size} کانفیگ ترافیک عبور دادند")
+                    events.emit("تست Xray تمام شد: $successfulCount از ${snapshot.size} کانفیگ HTTP واقعی عبور دادند")
                 }
 
                 if (successfulNodes.isEmpty()) {
-                    events.emit("هیچ کانفیگی در تست HTTPS واقعی سالم نبود؛ اتصال فیک به‌عنوان موفق ثبت نشد")
+                    events.emit("هیچ کانفیگی در تست واقعی Xray سالم نبود؛ TCP باز به‌تنهایی موفق محسوب نمی‌شود")
                 }
             } catch (error: Throwable) {
-                events.emit("تست واقعی سرورها کامل نشد: ${error.message ?: "خطای شبکه"}")
+                events.emit("تست Xray کامل نشد: ${error.message ?: "خطای شبکه"}")
             } finally {
                 _testingAllNodes.value = false
             }
@@ -444,8 +462,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Stable IDs let a refreshed subscription replace network configuration without erasing
-     * operational metadata gathered by the client (latency, failures, last-use and creation time).
+     * Preserve the original share URI exactly. The Xray engine consumes rawUri directly so
+     * Reality/transport parameters are not reconstructed by our Kotlin model.
      */
     private fun ProxyProfile.toNodeEntity(
         subscriptionId: String?,
@@ -483,7 +501,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             readTimeout = 18_000
             instanceFollowRedirects = true
             requestMethod = "GET"
-            setRequestProperty("User-Agent", "VMessPro/0.4 Android")
+            setRequestProperty("User-Agent", "VMessPro/0.5 Android Xray")
             setRequestProperty("Accept", "text/plain,*/*")
         }
         try {
@@ -529,5 +547,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         coreAdapter.close()
         database.close()
         super.onCleared()
+    }
+
+    private companion object {
+        const val MAX_PARALLEL_XRAY_TESTS = 3
     }
 }
