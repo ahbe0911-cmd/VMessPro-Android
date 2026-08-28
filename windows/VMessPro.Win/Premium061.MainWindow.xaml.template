@@ -1,0 +1,397 @@
+<Window x:Class="VMessPro.Win.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="VMess Pro 0.6.1 • Windows 8.1"
+        Width="1060" Height="720" MinWidth="900" MinHeight="640"
+        WindowStartupLocation="CenterScreen"
+        FlowDirection="RightToLeft"
+        FontFamily="{StaticResource VazirFont}"
+        Background="#07111F"
+        Closing="Window_Closing">
+    <Window.Resources>
+        <LinearGradientBrush x:Key="WindowGradient" StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="#07111F" Offset="0"/>
+            <GradientStop Color="#0B1730" Offset="0.48"/>
+            <GradientStop Color="#15132B" Offset="1"/>
+        </LinearGradientBrush>
+
+        <Style x:Key="PremiumButton" TargetType="Button">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Background" Value="#D9121C2C"/>
+            <Setter Property="BorderBrush" Value="#28FFFFFF"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="16">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#EF18263A"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#4DFFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Bd" Property="Opacity" Value="0.76"/></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Bd" Property="Opacity" Value="0.48"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="QuickButton" TargetType="Button" BasedOn="{StaticResource PremiumButton}">
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Background" Value="#BE101A2A"/>
+        </Style>
+
+        <Style x:Key="NavButton" TargetType="Button">
+            <Setter Property="Foreground" Value="#AFC1D8"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="12,5"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="16">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="FlatTextBox" TargetType="TextBox">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Background" Value="#E70C1628"/>
+            <Setter Property="BorderBrush" Value="#35FFFFFF"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="12"/>
+            <Setter Property="CaretBrush" Value="White"/>
+        </Style>
+
+        <Style x:Key="CardBorder" TargetType="Border">
+            <Setter Property="Background" Value="#D9111B2C"/>
+            <Setter Property="BorderBrush" Value="#28FFFFFF"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="18"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Background="{StaticResource WindowGradient}">
+        <Canvas IsHitTestVisible="False" Opacity="0.62">
+            <Ellipse Width="500" Height="500" Canvas.Left="-220" Canvas.Top="130">
+                <Ellipse.Fill>
+                    <RadialGradientBrush><GradientStop Color="#4A2AD4D9" Offset="0"/><GradientStop Color="#002AD4D9" Offset="1"/></RadialGradientBrush>
+                </Ellipse.Fill>
+            </Ellipse>
+            <Ellipse Width="500" Height="500" Canvas.Right="-220" Canvas.Top="-120">
+                <Ellipse.Fill>
+                    <RadialGradientBrush><GradientStop Color="#3F8B5CF6" Offset="0"/><GradientStop Color="#008B5CF6" Offset="1"/></RadialGradientBrush>
+                </Ellipse.Fill>
+            </Ellipse>
+            <Ellipse Width="340" Height="340" Canvas.Right="170" Canvas.Bottom="-210">
+                <Ellipse.Fill>
+                    <RadialGradientBrush><GradientStop Color="#2634D399" Offset="0"/><GradientStop Color="#0034D399" Offset="1"/></RadialGradientBrush>
+                </Ellipse.Fill>
+            </Ellipse>
+        </Canvas>
+
+        <Grid Margin="22,16,22,16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="66"/>
+            </Grid.RowDefinitions>
+
+            <!-- HOME: static responsive desktop viewport, no ScrollViewer -->
+            <Grid x:Name="HomePage" Grid.Row="0" MaxWidth="930" HorizontalAlignment="Center">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="58"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="62"/>
+                </Grid.RowDefinitions>
+
+                <!-- Compact header -->
+                <Grid Grid.Row="0" Margin="2,0,2,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="VMess Pro" Foreground="White" FontSize="23" FontWeight="Bold" VerticalAlignment="Center"/>
+                            <Border Background="#268B5CF6" BorderBrush="#668B5CF6" BorderThickness="1" CornerRadius="10" Padding="7,2" Margin="8,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="PRO" Foreground="#C9B7FF" FontSize="10" FontWeight="Bold" FlowDirection="LeftToRight"/>
+                            </Border>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                            <Ellipse x:Name="StatusDot" Width="7" Height="7" Fill="#9AA8BC" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBlock x:Name="StatusText" Text="قطع • آماده برای اتصال" Foreground="#9AA8BC" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" FlowDirection="LeftToRight">
+                        <Border Background="#B8121D2E" BorderBrush="#24FFFFFF" BorderThickness="1" CornerRadius="14" Padding="11,6" Margin="0,0,8,0">
+                            <StackPanel>
+                                <TextBlock x:Name="ClockText" Foreground="White" FontSize="14" FontWeight="Bold" HorizontalAlignment="Center"/>
+                                <TextBlock x:Name="PersianDateText" Foreground="#9FB0C8" FontSize="9" HorizontalAlignment="Center" FlowDirection="RightToLeft"/>
+                            </StackPanel>
+                        </Border>
+                        <Button Width="38" Height="38" Style="{StaticResource PremiumButton}" Click="SettingsNav_Click" Padding="0">
+                            <TextBlock Text="⚙" FontFamily="Segoe UI Symbol" Foreground="#AFC1D8" FontSize="16"/>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Main premium dashboard -->
+                <Grid Grid.Row="1" Margin="0,2,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="0.92*"/>
+                        <ColumnDefinition Width="14"/>
+                        <ColumnDefinition Width="1.35*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Connect zone -->
+                    <Border Grid.Column="0" Style="{StaticResource CardBorder}" Padding="18,14">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Grid.Row="0">
+                                <TextBlock Text="اتصال امن" Foreground="#EAF2FF" FontSize="18" FontWeight="Bold" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Xray • Wintun • اتصال واقعی" Foreground="#8798B3" FontSize="10" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+                            </StackPanel>
+
+                            <Grid Grid.Row="1" Width="196" Height="196" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <Border x:Name="PowerOuter" CornerRadius="98" BorderBrush="#8B5CF6" BorderThickness="1.5" Background="#09000000">
+                                    <Border.Effect><DropShadowEffect x:Name="PowerGlow" Color="#8B5CF6" BlurRadius="18" ShadowDepth="0" Opacity="0.38"/></Border.Effect>
+                                </Border>
+                                <Border x:Name="PowerMid" Margin="6" CornerRadius="92" BorderBrush="#40FFFFFF" BorderThickness="1"/>
+                                <Border x:Name="PowerCore" Margin="13" CornerRadius="85" BorderBrush="#558B5CF6" BorderThickness="1">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ElementName=PowerButton, Path=IsEnabled}" Value="False">
+                                                    <DataTrigger.EnterActions>
+                                                        <BeginStoryboard Name="BusyPulse">
+                                                            <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                                                                <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0.78" To="1" Duration="0:0:0.65"/>
+                                                            </Storyboard>
+                                                        </BeginStoryboard>
+                                                    </DataTrigger.EnterActions>
+                                                    <DataTrigger.ExitActions><StopStoryboard BeginStoryboardName="BusyPulse"/></DataTrigger.ExitActions>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <Border.Background>
+                                        <RadialGradientBrush>
+                                            <GradientStop x:Name="PowerCenterStop" Color="#8B5CF6" Offset="0"/>
+                                            <GradientStop x:Name="PowerEdgeStop" Color="#3B82F6" Offset="1"/>
+                                        </RadialGradientBrush>
+                                    </Border.Background>
+                                    <Button x:Name="PowerButton" Click="PowerButton_Click" Background="Transparent" BorderThickness="0" Foreground="White" Cursor="Hand">
+                                        <TextBlock Text="⏻" FontFamily="Segoe UI Symbol" Foreground="White" FontSize="67" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Button>
+                                </Border>
+                            </Grid>
+
+                            <StackPanel Grid.Row="2" HorizontalAlignment="Center">
+                                <TextBlock x:Name="PowerLabel" Text="اتصال" Foreground="White" FontSize="17" FontWeight="Bold" HorizontalAlignment="Center"/>
+                                <TextBlock Text="برای تغییر وضعیت کلیک کنید" Foreground="#71839C" FontSize="9" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <!-- Server + stats -->
+                    <Grid Grid.Column="2">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="82"/>
+                            <RowDefinition Height="10"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0" Style="{StaticResource CardBorder}" Padding="12,9" MouseLeftButtonUp="ServerCard_MouseLeftButtonUp" Cursor="Hand">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="50"/><ColumnDefinition/><ColumnDefinition Width="88"/></Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" Width="42" Height="42" CornerRadius="14" Background="#F7FFFFFF" VerticalAlignment="Center" HorizontalAlignment="Center">
+                                    <TextBlock Text="◎" Foreground="#3B82F6" FontSize="25" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <StackPanel Grid.Column="1" Margin="10,0" VerticalAlignment="Center">
+                                    <TextBlock Text="سرور فعال" Foreground="#7E91AB" FontSize="9"/>
+                                    <TextBlock x:Name="ServerNameText" Text="انتخاب سرور" Foreground="White" FontSize="17" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock x:Name="ServerMetaText" Text="برای اتصال یک پروفایل انتخاب کنید" Foreground="#2AD4D9" FontSize="10" TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                                <Border Grid.Column="2" Background="#1834D399" BorderBrush="#4034D399" BorderThickness="1" CornerRadius="12" Padding="8,5" VerticalAlignment="Center">
+                                    <StackPanel>
+                                        <TextBlock Text="Xray" Foreground="#7EE7C1" FontSize="10" FontWeight="Bold" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="‹" Foreground="#A9BAD1" FontSize="18" FontWeight="Bold" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </Border>
+
+                        <Grid Grid.Row="2">
+                            <Grid.RowDefinitions><RowDefinition/><RowDefinition Height="10"/><RowDefinition/></Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="10"/><ColumnDefinition/></Grid.ColumnDefinitions>
+
+                            <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource CardBorder}" Padding="12,8">
+                                <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="34"/></Grid.ColumnDefinitions>
+                                    <StackPanel><TextBlock Text="IP" Foreground="#8C9DB5" FontSize="9" FlowDirection="LeftToRight"/><TextBlock x:Name="IpText" Text="—" Foreground="White" FontSize="18" FontWeight="Bold" FlowDirection="LeftToRight" TextTrimming="CharacterEllipsis"/><TextBlock x:Name="IpSubText" Text="قطع" Foreground="#8B5CF6" FontSize="9"/></StackPanel>
+                                    <Border Grid.Column="1" Width="30" Height="30" CornerRadius="10" Background="#238B5CF6" VerticalAlignment="Top"><TextBlock Text="⌁" Foreground="#C9B7FF" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+                                </Grid>
+                            </Border>
+
+                            <Border Grid.Row="0" Grid.Column="2" Style="{StaticResource CardBorder}" Padding="12,8">
+                                <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="34"/></Grid.ColumnDefinitions>
+                                    <StackPanel><TextBlock Text="Ping" Foreground="#8C9DB5" FontSize="9" FlowDirection="LeftToRight"/><StackPanel Orientation="Horizontal" FlowDirection="LeftToRight"><TextBlock x:Name="PingText" Text="—" Foreground="White" FontSize="20" FontWeight="Bold"/><TextBlock Text=" ms" Foreground="#A3E635" FontSize="10" VerticalAlignment="Bottom" Margin="2,0,0,3"/></StackPanel><TextBlock Text="تأخیر واقعی" Foreground="#A3E635" FontSize="9"/></StackPanel>
+                                    <Border Grid.Column="1" Width="30" Height="30" CornerRadius="10" Background="#20A3E635" VerticalAlignment="Top"><TextBlock Text="⚡" Foreground="#C9F56A" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+                                </Grid>
+                            </Border>
+
+                            <Border Grid.Row="2" Grid.Column="0" Style="{StaticResource CardBorder}" Padding="12,8">
+                                <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="34"/></Grid.ColumnDefinitions>
+                                    <StackPanel><TextBlock Text="Speed" Foreground="#8C9DB5" FontSize="9" FlowDirection="LeftToRight"/><StackPanel Orientation="Horizontal" FlowDirection="LeftToRight"><TextBlock x:Name="SpeedText" Text="0.0" Foreground="White" FontSize="20" FontWeight="Bold"/><TextBlock Text=" Mbps" Foreground="#2AD4D9" FontSize="10" VerticalAlignment="Bottom" Margin="2,0,0,3"/></StackPanel><TextBlock Text="دانلود لحظه‌ای" Foreground="#2AD4D9" FontSize="9"/></StackPanel>
+                                    <Border Grid.Column="1" Width="30" Height="30" CornerRadius="10" Background="#202AD4D9" VerticalAlignment="Top"><TextBlock Text="↓" Foreground="#65EAF0" FontSize="17" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+                                </Grid>
+                            </Border>
+
+                            <Border Grid.Row="2" Grid.Column="2" Style="{StaticResource CardBorder}" Padding="12,8">
+                                <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="34"/></Grid.ColumnDefinitions>
+                                    <StackPanel><TextBlock Text="Protocol" Foreground="#8C9DB5" FontSize="9" FlowDirection="LeftToRight"/><TextBlock x:Name="SecurityText" Text="Xray" Foreground="White" FontSize="18" FontWeight="Bold" FlowDirection="LeftToRight" TextTrimming="CharacterEllipsis"/><TextBlock x:Name="SecuritySubText" Text="آماده" Foreground="#F472B6" FontSize="9"/></StackPanel>
+                                    <Border Grid.Column="1" Width="30" Height="30" CornerRadius="10" Background="#20F472B6" VerticalAlignment="Top"><TextBlock Text="◆" Foreground="#FF9DCE" FontSize="13" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                    </Grid>
+                </Grid>
+
+                <!-- Compact quick actions -->
+                <Grid Grid.Row="2">
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                    <Button Grid.Column="0" Margin="0,0,5,0" Style="{StaticResource QuickButton}" Click="AddButton_Click"><StackPanel><TextBlock Text="+" Foreground="#60A5FA" FontSize="19" FontWeight="Bold" HorizontalAlignment="Center"/><TextBlock Text="افزودن" Foreground="#DCE8F8" FontSize="10" HorizontalAlignment="Center"/></StackPanel></Button>
+                    <Button Grid.Column="1" Margin="5,0" Style="{StaticResource QuickButton}" Click="TestAllButton_Click"><StackPanel><TextBlock Text="⚡" Foreground="#A3E635" FontSize="17" HorizontalAlignment="Center"/><TextBlock Text="تست همه" Foreground="#DCE8F8" FontSize="10" HorizontalAlignment="Center"/></StackPanel></Button>
+                    <Button Grid.Column="2" Margin="5,0" Style="{StaticResource QuickButton}" Click="SplitButton_Click"><StackPanel><TextBlock Text="↗" Foreground="#F472B6" FontSize="18" HorizontalAlignment="Center"/><TextBlock Text="Split" Foreground="#DCE8F8" FontSize="10" HorizontalAlignment="Center" FlowDirection="LeftToRight"/></StackPanel></Button>
+                    <Button Grid.Column="3" Margin="5,0" Style="{StaticResource QuickButton}" Click="ServersNav_Click"><StackPanel><TextBlock Text="⬡" Foreground="#2AD4D9" FontSize="17" HorizontalAlignment="Center"/><TextBlock Text="Xray" Foreground="#DCE8F8" FontSize="10" HorizontalAlignment="Center" FlowDirection="LeftToRight"/></StackPanel></Button>
+                    <Button Grid.Column="4" Margin="5,0,0,0" Style="{StaticResource QuickButton}" Click="SmartButton_Click"><StackPanel><TextBlock Text="↔" Foreground="#34D399" FontSize="18" HorizontalAlignment="Center"/><TextBlock Text="هوشمند" Foreground="#DCE8F8" FontSize="10" HorizontalAlignment="Center"/></StackPanel></Button>
+                </Grid>
+            </Grid>
+
+            <!-- SERVERS -->
+            <Grid x:Name="ServersPage" Grid.Row="0" Visibility="Collapsed" MaxWidth="930" HorizontalAlignment="Center">
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
+                <StackPanel Grid.Row="0" Margin="0,6,0,12">
+                    <TextBlock Text="سرورها" Foreground="White" FontSize="27" FontWeight="Bold"/>
+                    <TextBlock Text="تست واقعی Xray و انتخاب سریع‌ترین پروفایل" Foreground="#8FA1BA" FontSize="11"/>
+                </StackPanel>
+                <Grid Grid.Row="1" Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                    <Button Grid.Column="0" Margin="0,0,5,0" Style="{StaticResource PremiumButton}" Click="AddButton_Click" Content="+ افزودن کانفیگ / Subscription"/>
+                    <Button Grid.Column="1" Margin="5,0" Style="{StaticResource PremiumButton}" Click="TestAllButton_Click" Content="تست واقعی همه"/>
+                    <Button Grid.Column="2" Margin="5,0,0,0" Style="{StaticResource PremiumButton}" Click="SmartButton_Click" Content="انتخاب سریع‌ترین"/>
+                </Grid>
+                <ListBox x:Name="ProfilesList" Grid.Row="2" Background="Transparent" BorderThickness="0" Foreground="White" SelectionChanged="ProfilesList_SelectionChanged" ScrollViewer.VerticalScrollBarVisibility="Auto">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Border Background="#C9111B2C" BorderBrush="#25FFFFFF" BorderThickness="1" CornerRadius="15" Margin="0,4" Padding="12">
+                                <Grid Width="840">
+                                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="190"/></Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="{Binding Name}" Foreground="White" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding Host}" Foreground="#8496AF" FontSize="10" TextTrimming="CharacterEllipsis" FlowDirection="LeftToRight"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" HorizontalAlignment="Left">
+                                        <TextBlock Text="{Binding Protocol}" Foreground="#F472B6" FontWeight="Bold" HorizontalAlignment="Left" FlowDirection="LeftToRight"/>
+                                        <TextBlock Text="{Binding LatencyMs, StringFormat={}{0} ms}" Foreground="#A3E635" HorizontalAlignment="Left" FlowDirection="LeftToRight"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+
+            <!-- STATS -->
+            <Grid x:Name="StatsPage" Grid.Row="0" Visibility="Collapsed" MaxWidth="900" HorizontalAlignment="Center">
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                <StackPanel Grid.Row="0" Margin="0,6,0,18"><TextBlock Text="آمار اتصال" Foreground="White" FontSize="27" FontWeight="Bold"/><TextBlock Text="ترافیک زنده از رابط Wintun" Foreground="#8FA1BA"/></StackPanel>
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Margin="0,0,6,0" Style="{StaticResource CardBorder}" Padding="20"><StackPanel><TextBlock Text="دانلود لحظه‌ای" Foreground="#8FA1BA"/><TextBlock x:Name="StatsDownloadText" Text="0.0 Mbps" Foreground="White" FontSize="29" FontWeight="Bold" FlowDirection="LeftToRight"/><TextBlock Text="↓" Foreground="#2AD4D9" FontSize="27"/></StackPanel></Border>
+                    <Border Grid.Column="1" Margin="6,0,0,0" Style="{StaticResource CardBorder}" Padding="20"><StackPanel><TextBlock Text="آپلود لحظه‌ای" Foreground="#8FA1BA"/><TextBlock x:Name="StatsUploadText" Text="0.0 Mbps" Foreground="White" FontSize="29" FontWeight="Bold" FlowDirection="LeftToRight"/><TextBlock Text="↑" Foreground="#34D399" FontSize="27"/></StackPanel></Border>
+                </Grid>
+                <Border Grid.Row="2" Style="{StaticResource CardBorder}" Padding="18" Margin="0,14,0,0">
+                    <StackPanel><TextBlock x:Name="StatsStateText" Text="وضعیت: قطع" Foreground="White" FontSize="15"/><TextBlock x:Name="StatsServerText" Text="سرور: —" Foreground="#91A3BC" Margin="0,8,0,0"/><TextBlock x:Name="StatsIpText" Text="IP: —" Foreground="#91A3BC" Margin="0,8,0,0" FlowDirection="LeftToRight"/></StackPanel>
+                </Border>
+            </Grid>
+
+            <!-- SETTINGS -->
+            <Grid x:Name="SettingsPage" Grid.Row="0" Visibility="Collapsed" MaxWidth="900" HorizontalAlignment="Center">
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                <StackPanel Grid.Row="0" Margin="0,6,0,18"><TextBlock Text="تنظیمات" Foreground="White" FontSize="27" FontWeight="Bold"/><TextBlock Text="Windows 8.1 • Xray + Wintun + tun2socks" Foreground="#8FA1BA"/></StackPanel>
+                <Border Grid.Row="1" Style="{StaticResource CardBorder}" Padding="18">
+                    <StackPanel>
+                        <TextBlock Text="هسته اتصال" Foreground="White" FontSize="17" FontWeight="Bold"/>
+                        <TextBlock Text="Xray-core • VMess / VLESS / Reality / Trojan" Foreground="#34D399" Margin="0,6,0,0" FlowDirection="LeftToRight"/>
+                        <Separator Background="#22FFFFFF" Margin="0,12"/>
+                        <TextBlock Text="اعتبار اتصال" Foreground="White" FontWeight="SemiBold"/>
+                        <TextBlock Text="Connected فقط بعد از بررسی HTTPS واقعی نمایش داده می‌شود." Foreground="#91A3BC" TextWrapping="Wrap" Margin="0,5,0,0"/>
+                        <Separator Background="#22FFFFFF" Margin="0,12"/>
+                        <TextBlock Text="DNS تونل" Foreground="White" FontWeight="SemiBold"/>
+                        <TextBlock Text="1.1.1.1 روی رابط Wintun" Foreground="#91A3BC" Margin="0,5,0,0" FlowDirection="LeftToRight"/>
+                    </StackPanel>
+                </Border>
+                <Border Grid.Row="2" Background="#151A283A" BorderBrush="#25F472B6" BorderThickness="1" CornerRadius="18" Padding="16" Margin="0,14,0,0">
+                    <TextBlock Text="Split Tunnel برنامه‌به‌برنامه در این Build ویندوز ۸.۱ به‌صورت نمایشی فعال نشده است؛ تونل فعلی Full-system و واقعی است." Foreground="#C7D4E6" TextWrapping="Wrap"/>
+                </Border>
+            </Grid>
+
+            <!-- Minimal bottom navigation -->
+            <Border Grid.Row="1" Background="#E60D1727" BorderBrush="#26FFFFFF" BorderThickness="1" CornerRadius="22" Padding="6" Margin="0,8,0,0" MaxWidth="760" HorizontalAlignment="Center">
+                <Grid Width="720">
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" CornerRadius="16" Margin="3">
+                        <Border.Style><Style TargetType="Border"><Setter Property="Background" Value="Transparent"/><Style.Triggers><DataTrigger Binding="{Binding ElementName=HomePage, Path=Visibility}" Value="Visible"><Setter Property="Background" Value="#258B5CF6"/><Setter Property="BorderBrush" Value="#4D8B5CF6"/><Setter Property="BorderThickness" Value="1"/></DataTrigger></Style.Triggers></Style></Border.Style>
+                        <Button x:Name="HomeNav" Style="{StaticResource NavButton}" Click="HomeNav_Click"><StackPanel><TextBlock Text="⌂" Foreground="#C9B7FF" FontSize="20" HorizontalAlignment="Center"/><TextBlock Text="خانه" Foreground="#DCE7F7" FontSize="9" HorizontalAlignment="Center"/></StackPanel></Button>
+                    </Border>
+                    <Border Grid.Column="1" CornerRadius="16" Margin="3">
+                        <Border.Style><Style TargetType="Border"><Setter Property="Background" Value="Transparent"/><Style.Triggers><DataTrigger Binding="{Binding ElementName=ServersPage, Path=Visibility}" Value="Visible"><Setter Property="Background" Value="#202AD4D9"/><Setter Property="BorderBrush" Value="#4D2AD4D9"/><Setter Property="BorderThickness" Value="1"/></DataTrigger></Style.Triggers></Style></Border.Style>
+                        <Button x:Name="ServersNav" Style="{StaticResource NavButton}" Click="ServersNav_Click"><StackPanel><TextBlock Text="●" Foreground="#2AD4D9" FontSize="14" HorizontalAlignment="Center"/><TextBlock Text="سرورها" Foreground="#B9C7DA" FontSize="9" HorizontalAlignment="Center"/></StackPanel></Button>
+                    </Border>
+                    <Border Grid.Column="2" CornerRadius="16" Margin="3">
+                        <Border.Style><Style TargetType="Border"><Setter Property="Background" Value="Transparent"/><Style.Triggers><DataTrigger Binding="{Binding ElementName=StatsPage, Path=Visibility}" Value="Visible"><Setter Property="Background" Value="#2034D399"/><Setter Property="BorderBrush" Value="#4D34D399"/><Setter Property="BorderThickness" Value="1"/></DataTrigger></Style.Triggers></Style></Border.Style>
+                        <Button x:Name="StatsNav" Style="{StaticResource NavButton}" Click="StatsNav_Click"><StackPanel><TextBlock Text="▥" Foreground="#34D399" FontSize="18" HorizontalAlignment="Center"/><TextBlock Text="آمار" Foreground="#B9C7DA" FontSize="9" HorizontalAlignment="Center"/></StackPanel></Button>
+                    </Border>
+                    <Border Grid.Column="3" CornerRadius="16" Margin="3">
+                        <Border.Style><Style TargetType="Border"><Setter Property="Background" Value="Transparent"/><Style.Triggers><DataTrigger Binding="{Binding ElementName=SettingsPage, Path=Visibility}" Value="Visible"><Setter Property="Background" Value="#20F472B6"/><Setter Property="BorderBrush" Value="#4DF472B6"/><Setter Property="BorderThickness" Value="1"/></DataTrigger></Style.Triggers></Style></Border.Style>
+                        <Button x:Name="SettingsNav" Style="{StaticResource NavButton}" Click="SettingsNav_Click"><StackPanel><TextBlock Text="⚙" Foreground="#F472B6" FontSize="18" HorizontalAlignment="Center"/><TextBlock Text="تنظیمات" Foreground="#B9C7DA" FontSize="9" HorizontalAlignment="Center"/></StackPanel></Button>
+                    </Border>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- IMPORT OVERLAY -->
+        <Grid x:Name="ImportOverlay" Visibility="Collapsed" Background="#C0050B14">
+            <Border Width="680" MaxHeight="520" Background="#FF0D1828" BorderBrush="#438B5CF6" BorderThickness="1" CornerRadius="22" Padding="22" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Margin="0,0,0,12"><TextBlock Text="افزودن کانفیگ یا Subscription" Foreground="White" FontSize="22" FontWeight="Bold"/><TextBlock Text="VMess / VLESS / Reality / Trojan / لینک اشتراک" Foreground="#8FA1BA" FlowDirection="LeftToRight"/></StackPanel>
+                    <TextBox x:Name="ImportTextBox" Grid.Row="1" Style="{StaticResource FlatTextBox}" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MinHeight="250" FlowDirection="LeftToRight"/>
+                    <Grid Grid.Row="2" Margin="0,14,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><Button Grid.Column="0" Margin="0,0,6,0" Style="{StaticResource PremiumButton}" Click="ImportConfirm_Click" Content="ذخیره و بررسی"/><Button Grid.Column="1" Margin="6,0,0,0" Style="{StaticResource PremiumButton}" Click="ImportCancel_Click" Content="انصراف"/></Grid>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>
