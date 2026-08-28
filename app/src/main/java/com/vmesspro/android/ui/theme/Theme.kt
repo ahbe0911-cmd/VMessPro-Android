@@ -12,33 +12,26 @@ import androidx.compose.ui.text.font.FontWeight
 import com.vmesspro.android.R
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFF36D9FF),
-    onPrimary = Color(0xFF00151D),
-    primaryContainer = Color(0xFF073449),
-    onPrimaryContainer = Color(0xFFD7F7FF),
-    secondary = Color(0xFFA98BFF),
-    onSecondary = Color(0xFF160049),
-    secondaryContainer = Color(0xFF2A1F5A),
-    onSecondaryContainer = Color(0xFFE9E0FF),
-    tertiary = Color(0xFF4EE6B1),
-    onTertiary = Color(0xFF002116),
-    background = Color(0xFF030712),
-    onBackground = Color(0xFFF5F8FF),
-    surface = Color(0xFF091322),
-    onSurface = Color(0xFFF5F8FF),
-    surfaceVariant = Color(0xFF101D31),
-    onSurfaceVariant = Color(0xFFB8C7DD),
-    outline = Color(0xFF315070),
-    outlineVariant = Color(0xFF1A2E47),
-    error = Color(0xFFFF6B7A),
-    onError = Color(0xFF3A0008),
+    primary = Color(0xFF3DD6F5),
+    onPrimary = Color(0xFF001419),
+    primaryContainer = Color(0xFF0A3440),
+    onPrimaryContainer = Color(0xFFD6F7FF),
+    secondary = Color(0xFFB8C8D9),
+    onSecondary = Color(0xFF172A38),
+    tertiary = Color(0xFF53DDAA),
+    background = Color(0xFF071019),
+    onBackground = Color(0xFFF5F8FA),
+    surface = Color(0xFF0C1620),
+    onSurface = Color(0xFFF5F8FA),
+    surfaceVariant = Color(0xFF132330),
+    onSurfaceVariant = Color(0xFFBAC8D2),
+    outline = Color(0xFF3B5668),
+    error = Color(0xFFFF6F7D),
 )
 
 val VazirmatnFontFamily = FontFamily(
     Font(R.font.vazirmatn_regular, FontWeight.Normal),
-    Font(R.font.vazirmatn_medium, FontWeight.Medium),
     Font(R.font.vazirmatn_bold, FontWeight.Bold),
-    Font(R.font.vazirmatn_extra_bold, FontWeight.ExtraBold),
 )
 
 private fun TextStyle.vazir() = copy(fontFamily = VazirmatnFontFamily)

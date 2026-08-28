@@ -28,8 +28,6 @@ import java.net.URI
 import java.net.URL
 import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -38,14 +36,18 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 data class InstalledAppInfo(
     val label: String,
     val packageName: String,
     val isSystem: Boolean,
+)
+
+data class NodeTestProgress(
+    val completed: Int = 0,
+    val total: Int = 0,
+    val successful: Int = 0,
 )
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
@@ -103,12 +105,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _testingAllNodes = MutableStateFlow(false)
     val testingAllNodes: StateFlow<Boolean> = _testingAllNodes
 
+    private val _testProgress = MutableStateFlow(NodeTestProgress())
+    val testProgress: StateFlow<NodeTestProgress> = _testProgress
+
     val events = MutableSharedFlow<String>(extraBufferCapacity = 12)
 
     fun connectSelected() {
         val id = selectedNode.value?.stableId
         if (id == null) {
             events.tryEmit("ابتدا یک سرور انتخاب کنید")
+            return
+        }
+        if (_testingAllNodes.value) {
+            events.tryEmit("تست واقعی سرورها در حال اجراست")
             return
         }
         viewModelScope.launch {
@@ -136,14 +145,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun probeNode(id: String) {
+        if (_testingAllNodes.value) return
         viewModelScope.launch(Dispatchers.IO) {
             val node = database.nodeDao().getById(id) ?: return@launch
-            val result = coreAdapter.probe(id)
+            val result = coreAdapter.validateProfileTraffic(id)
             val now = System.currentTimeMillis()
+            val verifiedLatency = result.httpRttMs ?: result.tcpLatencyMs
             database.nodeDao().upsert(
                 listOf(
                     node.copy(
-                        lastLatencyMs = result.tcpLatencyMs ?: node.lastLatencyMs,
+                        lastLatencyMs = verifiedLatency ?: node.lastLatencyMs,
                         lastProbeSucceeded = result.success,
                         lastTestedAt = now,
                         consecutiveFailures = if (result.success) 0 else node.consecutiveFailures + 1,
@@ -152,8 +163,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 )
             )
             events.emit(
-                if (result.success) "پینگ TCP: ${result.tcpLatencyMs ?: 0} ms"
-                else "تست سرور ناموفق بود"
+                if (result.success) "تست واقعی موفق: ${verifiedLatency ?: 0} ms"
+                else "ترافیک واقعی از این کانفیگ عبور نکرد"
             )
         }
     }
@@ -172,47 +183,54 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch(Dispatchers.IO) {
             _testingAllNodes.value = true
+            _testProgress.value = NodeTestProgress(total = snapshot.size)
             try {
-                val semaphore = Semaphore(MAX_PARALLEL_PROBES)
-                val results = snapshot.map { node ->
-                    async {
-                        semaphore.withPermit {
-                            node to coreAdapter.probe(node.stableId)
-                        }
-                    }
-                }.awaitAll()
+                events.emit("تست واقعی ${snapshot.size} کانفیگ شروع شد؛ هر کانفیگ باید HTTPS واقعی عبور دهد")
+                val updatedNodes = ArrayList<NodeEntity>(snapshot.size)
+                var successfulCount = 0
 
-                val now = System.currentTimeMillis()
-                val updatedNodes = results.map { (node, result) ->
-                    node.copy(
-                        lastLatencyMs = result.tcpLatencyMs ?: node.lastLatencyMs,
+                snapshot.forEachIndexed { index, node ->
+                    val result = coreAdapter.validateProfileTraffic(node.stableId)
+                    val now = System.currentTimeMillis()
+                    val verifiedLatency = result.httpRttMs ?: result.tcpLatencyMs
+                    val updated = node.copy(
+                        lastLatencyMs = verifiedLatency ?: node.lastLatencyMs,
                         lastProbeSucceeded = result.success,
                         lastTestedAt = now,
                         consecutiveFailures = if (result.success) 0 else node.consecutiveFailures + 1,
                         updatedAt = now,
                     )
+                    database.nodeDao().upsert(listOf(updated))
+                    updatedNodes += updated
+                    if (result.success) successfulCount += 1
+                    _testProgress.value = NodeTestProgress(
+                        completed = index + 1,
+                        total = snapshot.size,
+                        successful = successfulCount,
+                    )
                 }
-                database.nodeDao().upsert(updatedNodes)
 
-                val successfulIds = results
-                    .asSequence()
-                    .filter { it.second.success }
-                    .map { it.first.stableId }
-                    .toSet()
-
-                if (selectBestAfter && successfulIds.isNotEmpty()) {
+                val successfulNodes = updatedNodes.filter { it.lastProbeSucceeded == true }
+                if (selectBestAfter && successfulNodes.isNotEmpty()) {
+                    val now = System.currentTimeMillis()
                     val best = SmartNodeSelector
-                        .order(updatedNodes.filter { it.stableId in successfulIds }, preferredId = null, nowEpochMillis = now)
+                        .order(successfulNodes, preferredId = null, nowEpochMillis = now)
                         .firstOrNull()
                     if (best != null) {
                         preferencesRepository.setSelectedNode(best.stableId)
-                        events.emit("بهترین سرور انتخاب شد: ${best.name} • ${best.lastLatencyMs ?: 0} ms")
+                        events.emit(
+                            "تست واقعی تمام شد: $successfulCount از ${snapshot.size} سالم • بهترین: ${best.name} • ${best.lastLatencyMs ?: 0} ms"
+                        )
                     }
                 } else {
-                    events.emit("تست تمام شد: ${successfulIds.size} از ${snapshot.size} سرور پاسخ دادند")
+                    events.emit("تست واقعی تمام شد: $successfulCount از ${snapshot.size} کانفیگ ترافیک عبور دادند")
+                }
+
+                if (successfulNodes.isEmpty()) {
+                    events.emit("هیچ کانفیگی در تست HTTPS واقعی سالم نبود؛ اتصال فیک به‌عنوان موفق ثبت نشد")
                 }
             } catch (error: Throwable) {
-                events.emit("تست گروهی سرورها کامل نشد: ${error.message ?: "خطای شبکه"}")
+                events.emit("تست واقعی سرورها کامل نشد: ${error.message ?: "خطای شبکه"}")
             } finally {
                 _testingAllNodes.value = false
             }
@@ -465,7 +483,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             readTimeout = 18_000
             instanceFollowRedirects = true
             requestMethod = "GET"
-            setRequestProperty("User-Agent", "VMessPro/0.2 Android")
+            setRequestProperty("User-Agent", "VMessPro/0.4 Android")
             setRequestProperty("Accept", "text/plain,*/*")
         }
         try {
@@ -511,9 +529,5 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         coreAdapter.close()
         database.close()
         super.onCleared()
-    }
-
-    private companion object {
-        const val MAX_PARALLEL_PROBES = 8
     }
 }

@@ -43,8 +43,8 @@ android {
         applicationId = "com.vmesspro.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 4
+        versionName = "0.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -58,6 +58,21 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+        }
+        create("compact") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release", "debug")
+        }
+    }
+
+    // Do not put emulator ABIs into phone APKs. CI emits one compact APK per phone ABI.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            isUniversalApk = false
         }
     }
 
@@ -83,9 +98,7 @@ android {
 
 val vazirmatnFonts = mapOf(
     "vazirmatn_regular.ttf" to "https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-Regular.ttf",
-    "vazirmatn_medium.ttf" to "https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-Medium.ttf",
     "vazirmatn_bold.ttf" to "https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-Bold.ttf",
-    "vazirmatn_extra_bold.ttf" to "https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-ExtraBold.ttf",
 )
 
 val prepareVazirmatnFonts = tasks.register<PrepareVazirmatnFonts>("prepareVazirmatnFonts") {
@@ -111,17 +124,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.animation:animation")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
     debugImplementation("androidx.compose.ui:ui-tooling")
-
-    // QR import: CameraX 1.5.3 + bundled ML Kit model (no runtime model download required).
-    implementation("androidx.camera:camera-core:1.5.3")
-    implementation("androidx.camera:camera-camera2:1.5.3")
-    implementation("androidx.camera:camera-lifecycle:1.5.3")
-    implementation("androidx.camera:camera-view:1.5.3")
-    implementation("com.google.mlkit:barcode-scanning:17.3.0")
 
     implementation("androidx.room:room-runtime:2.8.4")
     implementation("androidx.room:room-ktx:2.8.4")
