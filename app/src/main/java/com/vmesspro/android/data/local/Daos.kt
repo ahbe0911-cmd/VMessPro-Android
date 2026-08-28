@@ -19,6 +19,9 @@ interface NodeDao {
     @Query("SELECT * FROM nodes WHERE subscriptionId = :subscriptionId")
     suspend fun getBySubscription(subscriptionId: String): List<NodeEntity>
 
+    @Query("SELECT * FROM nodes")
+    suspend fun getAllOnce(): List<NodeEntity>
+
     @Upsert
     suspend fun upsert(nodes: List<NodeEntity>)
 
@@ -66,6 +69,9 @@ interface ConnectionHistoryDao {
 
     @Insert
     suspend fun insert(history: ConnectionHistoryEntity): Long
+
+    @Query("UPDATE connection_history SET status = :status WHERE id = :id")
+    suspend fun setStatus(id: Long, status: String)
 
     @Query("UPDATE connection_history SET endedAt = :endedAt, downloadedBytes = :downloadedBytes, uploadedBytes = :uploadedBytes, status = :status, failureReason = :failureReason WHERE id = :id")
     suspend fun finish(
