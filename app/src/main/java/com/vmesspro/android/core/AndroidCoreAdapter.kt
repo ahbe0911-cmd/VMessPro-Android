@@ -92,9 +92,20 @@ class AndroidCoreAdapter(context: Context) : CoreAdapter, AutoCloseable {
             SplitTunnelMode.EXCLUDE_SELECTED -> exclude -= appContext.packageName
         }
 
+        val rankedCandidates = SmartNodeSelector
+            .order(database.nodeDao().getAllOnce(), preferredId = profileId)
+            .map { it.stableId }
+            .distinct()
+            .take(MAX_FAILOVER_CANDIDATES)
+            .toMutableList()
+            .apply {
+                if (profileId !in this) add(0, profileId)
+            }
+
         val intent = Intent(appContext, VpnCoreService::class.java).apply {
             action = CoreContract.ACTION_CONNECT
             putExtra(CoreContract.EXTRA_PROFILE_ID, profileId)
+            putStringArrayListExtra(CoreContract.EXTRA_CANDIDATE_IDS, ArrayList(rankedCandidates))
             putExtra(CoreContract.EXTRA_SPLIT_MODE, preferences.splitTunnelMode.name)
             putStringArrayListExtra(CoreContract.EXTRA_INCLUDED, ArrayList(include))
             putStringArrayListExtra(CoreContract.EXTRA_EXCLUDED, ArrayList(exclude))
@@ -135,5 +146,9 @@ class AndroidCoreAdapter(context: Context) : CoreAdapter, AutoCloseable {
     override fun close() {
         runCatching { appContext.unregisterReceiver(stateReceiver) }
         database.close()
+    }
+
+    private companion object {
+        const val MAX_FAILOVER_CANDIDATES = 5
     }
 }
