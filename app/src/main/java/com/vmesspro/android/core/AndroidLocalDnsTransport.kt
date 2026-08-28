@@ -23,7 +23,9 @@ internal object AndroidLocalDnsTransport : LocalDNSTransport {
     override fun raw(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
 
     override fun exchange(ctx: ExchangeContext, message: ByteArray) {
-        check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) { "Raw DNS requires Android 10+" }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            throw UnsupportedOperationException("Raw DNS requires Android 10+")
+        }
         val network = PhysicalNetworkMonitor.currentNetwork ?: error("missing physical network")
         val latch = CountDownLatch(1)
         val failure = AtomicReference<Throwable?>(null)

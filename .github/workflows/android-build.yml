@@ -46,7 +46,7 @@ jobs:
 
       - name: Restore libbox cache
         id: libbox-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: app/libs/libbox.aar
           key: libbox-${{ runner.os }}-${{ env.SING_BOX_VERSION }}-ndk-${{ env.ANDROID_NDK_VERSION }}-go-1.24.7
@@ -68,6 +68,13 @@ jobs:
           cp sing-box-src/libbox.aar app/libs/libbox.aar
           test -s app/libs/libbox.aar
 
+      - name: Save libbox cache
+        if: steps.libbox-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: app/libs/libbox.aar
+          key: libbox-${{ runner.os }}-${{ env.SING_BOX_VERSION }}-ndk-${{ env.ANDROID_NDK_VERSION }}-go-1.24.7
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -77,7 +84,15 @@ jobs:
         run: gradle --no-daemon :app:testDebugUnitTest
 
       - name: Lint
-        run: gradle --no-daemon :app:lintDebug
+        shell: bash
+        run: |
+          set +e
+          gradle --no-daemon :app:lintDebug
+          lint_status=$?
+          if [ "${lint_status}" -ne 0 ] && [ -f app/build/reports/lint-results-debug.txt ]; then
+            cat app/build/reports/lint-results-debug.txt
+          fi
+          exit "${lint_status}"
 
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug
