@@ -15,13 +15,16 @@ namespace VMessPro.Win
     public sealed class VpnEngine : IDisposable
     {
         private const string TunGuid = "{30E6A0AA-59A6-4A96-9D18-9B5F5C1A6E51}";
+        private const string TunName = "VMessPro";
         private const string TunAddress = "192.168.123.1";
+        private const string TunMask = "255.255.255.0";
 
         private readonly string _baseDir;
         private readonly string _coreDir;
         private readonly string _runtimeDir;
         private readonly string _xrayPath;
         private readonly string _tun2SocksPath;
+        private readonly string _diagnosticPath;
 
         private Process _xray;
         private Process _tun2Socks;
@@ -52,6 +55,7 @@ namespace VMessPro.Win
             Directory.CreateDirectory(_runtimeDir);
             _xrayPath = Path.Combine(_coreDir, "xray.exe");
             _tun2SocksPath = Path.Combine(_coreDir, "tun2socks.exe");
+            _diagnosticPath = Path.Combine(_runtimeDir, "windows-tunnel.log");
         }
 
         public bool CoreFilesPresent
@@ -70,6 +74,8 @@ namespace VMessPro.Win
             if (!CoreFilesPresent) throw new FileNotFoundException("فایل‌های Core ویندوز کامل نیستند.");
 
             await DisconnectInternalAsync(false).ConfigureAwait(false);
+            CleanupStaleRoutes();
+            ResetDiagnostics();
             SetState(WinVpnState.Preparing, "در حال آماده‌سازی Xray…");
 
             try
@@ -81,6 +87,8 @@ namespace VMessPro.Win
                 var route = FindDefaultRoute();
                 _gateway = route.Gateway;
                 _physicalIfIndex = route.InterfaceIndex;
+                AppendDiagnostic("Primary: " + route.InterfaceName + " / " + _gateway + " / if=" + _physicalIfIndex);
+                AppendDiagnostic("Endpoint: " + _serverIp);
 
                 var socksPort = GetFreePort();
                 var httpPort = GetFreePort();
@@ -98,30 +106,42 @@ namespace VMessPro.Win
                 var proxyLatency = await VerifyThroughHttpProxyAsync(httpPort).ConfigureAwait(false);
                 profile.LatencyMs = proxyLatency;
                 profile.LastSuccess = true;
+                AppendDiagnostic("Xray proxy verified: " + proxyLatency + " ms");
 
                 var beforeInterfaces = new HashSet<string>(
                     NetworkInterface.GetAllNetworkInterfaces().Select(n => n.Id),
                     StringComparer.OrdinalIgnoreCase);
 
-                _tun2Socks = StartHidden(
-                    _tun2SocksPath,
-                    "--device " + Quote("tun://wintun?guid=" + TunGuid) +
+                SetState(WinVpnState.Connecting, "در حال ساخت تونل ویندوز…");
+                _tun2Socks = StartTun2Socks(
+                    "--device " + Quote("tun://" + TunName + "?guid=" + TunGuid) +
                     " --proxy " + Quote("socks5://127.0.0.1:" + socksPort) +
-                    " --mtu 1500 --loglevel warning",
-                    _coreDir);
+                    " --mtu 1500 --loglevel info");
 
-                var tun = await WaitForTunInterfaceAsync(beforeInterfaces, 7500).ConfigureAwait(false);
-                _tunIfIndex = tun.GetIPProperties().GetIPv4Properties().Index;
+                var tun = await WaitForTunInterfaceAsync(beforeInterfaces, 9000).ConfigureAwait(false);
+                var ipv4 = tun.GetIPProperties().GetIPv4Properties();
+                if (ipv4 == null) throw new InvalidOperationException("رابط Wintun فاقد IPv4 است.");
+
+                _tunIfIndex = ipv4.Index;
                 _tunInterfaceId = tun.Id;
                 _tunInterfaceName = tun.Name;
+                AppendDiagnostic("TUN: " + _tunInterfaceName + " / id=" + _tunInterfaceId + " / if=" + _tunIfIndex);
 
-                RunNetsh("interface ipv4 set address name=" + Quote(_tunInterfaceName) + " source=static address=" + TunAddress + " mask=255.255.255.0 gateway=none");
-                RunNetsh("interface ipv4 set dnsservers name=" + Quote(_tunInterfaceName) + " source=static address=1.1.1.1 register=none validate=no");
+                ConfigureTunInterface();
 
+                // Keep the Xray server outside the VPN before the default route changes.
                 AddRoute(_serverIp, "255.255.255.255", _gateway, 1, _physicalIfIndex);
-                AddRoute("0.0.0.0", "128.0.0.0", TunAddress, 5, _tunIfIndex);
-                AddRoute("128.0.0.0", "128.0.0.0", TunAddress, 5, _tunIfIndex);
 
+                // Use the route model documented by tun2socks for Windows: one default route
+                // attached directly to the Wintun interface. This is more reliable on Windows 8.1
+                // than the previous pair of 0/1 + 128/1 route.exe entries.
+                AddTunDefaultRoute();
+
+                await WaitForTunRouteReadyAsync().ConfigureAwait(false);
+                EnsureProcessAlive(_tun2Socks, "tun2socks");
+                FlushDnsQuietly();
+
+                SetState(WinVpnState.Verifying, "در حال بررسی ترافیک واقعی ویندوز…");
                 var systemLatency = await VerifySystemTunnelAsync().ConfigureAwait(false);
                 var publicIp = await FetchPublicIpAsync().ConfigureAwait(false);
                 profile.LatencyMs = systemLatency;
@@ -133,9 +153,11 @@ namespace VMessPro.Win
                     systemLatency,
                     publicIp,
                     DateTime.Now);
+                AppendDiagnostic("System tunnel verified: " + systemLatency + " ms / IP=" + publicIp);
             }
             catch (Exception ex)
             {
+                AppendDiagnostic("ERROR: " + ex);
                 await DisconnectInternalAsync(false).ConfigureAwait(false);
                 SetState(WinVpnState.Error, "خطا: " + ex.Message);
                 throw;
@@ -196,7 +218,7 @@ namespace VMessPro.Win
             {
                 using (var client = new WebClient())
                 {
-                    client.Headers[HttpRequestHeader.UserAgent] = "VMessPro-Windows/0.6";
+                    client.Headers[HttpRequestHeader.UserAgent] = "VMessPro-Windows/0.6.2";
                     text = await client.DownloadStringTaskAsync(text).ConfigureAwait(false);
                 }
             }
@@ -249,7 +271,7 @@ namespace VMessPro.Win
             return Snapshot;
         }
 
-        public ParsedShare EnsureMetadata(VpnProfile profile)
+        private ParsedShare EnsureMetadata(VpnProfile profile)
         {
             var parsed = XrayConfigBuilder.Parse(profile.RawLink);
             profile.Protocol = parsed.Protocol;
@@ -260,8 +282,12 @@ namespace VMessPro.Win
 
         private async Task DisconnectInternalAsync(bool broadcast)
         {
+            DeleteTunDefaultRouteQuietly();
+
+            // Clean routes created by the previous 0.6.1 implementation as well.
             DeleteRoute("0.0.0.0", "128.0.0.0", TunAddress, _tunIfIndex);
             DeleteRoute("128.0.0.0", "128.0.0.0", TunAddress, _tunIfIndex);
+
             if (!string.IsNullOrWhiteSpace(_serverIp) && !string.IsNullOrWhiteSpace(_gateway))
                 DeleteRoute(_serverIp, "255.255.255.255", _gateway, _physicalIfIndex);
 
@@ -275,8 +301,77 @@ namespace VMessPro.Win
             _tunIfIndex = 0;
             _tunInterfaceId = null;
             _tunInterfaceName = null;
-            await Task.Delay(60).ConfigureAwait(false);
+            await Task.Delay(100).ConfigureAwait(false);
             if (broadcast) SetState(WinVpnState.Disconnected, "قطع • آماده برای اتصال");
+        }
+
+        private void ConfigureTunInterface()
+        {
+            RunNetsh("interface ipv4 set address name=" + Quote(_tunInterfaceName) +
+                     " source=static address=" + TunAddress + " mask=" + TunMask + " gateway=none");
+            RunNetsh("interface ipv4 set interface interface=" + Quote(_tunInterfaceName) + " metric=1");
+            RunNetsh("interface ipv4 set dnsservers name=" + Quote(_tunInterfaceName) +
+                     " source=static address=1.1.1.1 register=none validate=no");
+        }
+
+        private void AddTunDefaultRoute()
+        {
+            DeleteTunDefaultRouteQuietly();
+            var result = RunProcessCapture(
+                "netsh.exe",
+                "interface ipv4 add route 0.0.0.0/0 " + Quote(_tunInterfaceName) + " " + TunAddress + " metric=1",
+                Environment.SystemDirectory,
+                8000);
+            if (result.ExitCode != 0)
+                throw new InvalidOperationException("مسیر پیش‌فرض Wintun ساخته نشد: " + result.Error + " " + result.Output);
+        }
+
+        private void DeleteTunDefaultRouteQuietly()
+        {
+            if (string.IsNullOrWhiteSpace(_tunInterfaceName))
+            {
+                // Best-effort cleanup for a previous crashed process. The persistent adapter is named VMessPro.
+                var existing = FindTunInterfaceByName();
+                if (existing != null) _tunInterfaceName = existing.Name;
+            }
+
+            if (string.IsNullOrWhiteSpace(_tunInterfaceName)) return;
+            try
+            {
+                RunProcessCapture(
+                    "netsh.exe",
+                    "interface ipv4 delete route 0.0.0.0/0 " + Quote(_tunInterfaceName) + " " + TunAddress,
+                    Environment.SystemDirectory,
+                    5000);
+            }
+            catch { }
+        }
+
+        private void CleanupStaleRoutes()
+        {
+            DeleteRoute("0.0.0.0", "128.0.0.0", TunAddress, 0);
+            DeleteRoute("128.0.0.0", "128.0.0.0", TunAddress, 0);
+            DeleteTunDefaultRouteQuietly();
+            _tunInterfaceName = null;
+        }
+
+        private async Task WaitForTunRouteReadyAsync()
+        {
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < 4500)
+            {
+                EnsureProcessAlive(_tun2Socks, "tun2socks");
+                var table = RunProcessCapture("route.exe", "PRINT -4", Environment.SystemDirectory, 5000);
+                if (table.ExitCode == 0 &&
+                    table.Output.IndexOf("0.0.0.0", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                    table.Output.IndexOf(TunAddress, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    await Task.Delay(450).ConfigureAwait(false);
+                    return;
+                }
+                await Task.Delay(180).ConfigureAwait(false);
+            }
+            throw new InvalidOperationException("Route جدول ویندوز برای Wintun آماده نشد.");
         }
 
         private async Task<int> VerifyThroughHttpProxyAsync(int httpPort)
@@ -293,11 +388,11 @@ namespace VMessPro.Win
                     var sw = Stopwatch.StartNew();
                     var request = (HttpWebRequest)WebRequest.Create(endpoint);
                     request.Proxy = new WebProxy("http://127.0.0.1:" + httpPort);
-                    request.Timeout = 4000;
-                    request.ReadWriteTimeout = 4000;
+                    request.Timeout = 5000;
+                    request.ReadWriteTimeout = 5000;
                     request.AllowAutoRedirect = false;
                     request.KeepAlive = false;
-                    request.UserAgent = "VMessPro-Windows/0.6";
+                    request.UserAgent = "VMessPro-Windows/0.6.2";
                     using (var response = (HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false))
                     {
                         sw.Stop();
@@ -314,33 +409,45 @@ namespace VMessPro.Win
         private async Task<int> VerifySystemTunnelAsync()
         {
             Exception last = null;
+            // First endpoint is an IPv4 literal so DNS cannot hide a route problem.
             foreach (var endpoint in new[]
             {
+                "https://1.1.1.1/cdn-cgi/trace",
                 "https://www.gstatic.com/generate_204",
                 "https://cp.cloudflare.com/generate_204"
             })
             {
                 try
                 {
+                    EnsureProcessAlive(_tun2Socks, "tun2socks");
                     var sw = Stopwatch.StartNew();
                     var request = (HttpWebRequest)WebRequest.Create(endpoint);
                     request.Proxy = null;
-                    request.Timeout = 4500;
-                    request.ReadWriteTimeout = 4500;
+                    request.Timeout = 6000;
+                    request.ReadWriteTimeout = 6000;
                     request.AllowAutoRedirect = false;
                     request.KeepAlive = false;
-                    request.UserAgent = "VMessPro-Windows/0.6";
+                    request.UserAgent = "VMessPro-Windows/0.6.2";
                     using (var response = (HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false))
                     {
                         sw.Stop();
                         var code = (int)response.StatusCode;
-                        if (code == 204 || (code >= 200 && code < 400))
+                        if (code >= 200 && code < 400)
                             return Math.Max(1, (int)sw.ElapsedMilliseconds);
                     }
                 }
-                catch (Exception ex) { last = ex; }
+                catch (Exception ex)
+                {
+                    last = ex;
+                    AppendDiagnostic("Verify failed " + endpoint + ": " + ex.Message);
+                }
             }
-            throw new InvalidOperationException("TUN ساخته شد اما ترافیک واقعی ویندوز از VPN عبور نکرد.", last);
+
+            var routeDump = RunProcessCapture("route.exe", "PRINT -4", Environment.SystemDirectory, 6000);
+            AppendDiagnostic("ROUTE TABLE:\r\n" + routeDump.Output);
+            throw new InvalidOperationException(
+                "تونل ساخته شد اما Route ویندوز عبور ترافیک را تأیید نکرد. فایل تشخیص در %LOCALAPPDATA%\\VMessPro\\run\\windows-tunnel.log ذخیره شد.",
+                last);
         }
 
         private async Task<string> FetchPublicIpAsync()
@@ -351,9 +458,10 @@ namespace VMessPro.Win
                 {
                     var request = (HttpWebRequest)WebRequest.Create(endpoint);
                     request.Proxy = null;
-                    request.Timeout = 4000;
-                    request.ReadWriteTimeout = 4000;
+                    request.Timeout = 5000;
+                    request.ReadWriteTimeout = 5000;
                     request.KeepAlive = false;
+                    request.UserAgent = "VMessPro-Windows/0.6.2";
                     using (var response = (HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false))
                     using (var reader = new StreamReader(response.GetResponseStream()))
                     {
@@ -392,23 +500,35 @@ namespace VMessPro.Win
             var sw = Stopwatch.StartNew();
             while (sw.ElapsedMilliseconds < timeoutMs)
             {
+                EnsureProcessAlive(_tun2Socks, "tun2socks");
                 var all = NetworkInterface.GetAllNetworkInterfaces();
+
                 var found = all.FirstOrDefault(n =>
-                    !before.Contains(n.Id) &&
-                    ((n.Description ?? string.Empty).IndexOf("Wintun", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                     (n.Name ?? string.Empty).IndexOf("wintun", StringComparison.OrdinalIgnoreCase) >= 0));
+                    string.Equals(n.Name, TunName, StringComparison.OrdinalIgnoreCase));
 
                 if (found == null)
                 {
                     found = all.FirstOrDefault(n =>
-                        (n.Description ?? string.Empty).IndexOf("Wintun", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        (n.Name ?? string.Empty).IndexOf("wintun", StringComparison.OrdinalIgnoreCase) >= 0);
+                        !before.Contains(n.Id) &&
+                        ((n.Description ?? string.Empty).IndexOf("Wintun", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                         (n.Name ?? string.Empty).IndexOf(TunName, StringComparison.OrdinalIgnoreCase) >= 0));
                 }
 
                 if (found != null) return found;
                 await Task.Delay(120).ConfigureAwait(false);
             }
-            throw new TimeoutException("Wintun interface ساخته نشد.");
+            throw new TimeoutException("رابط اختصاصی Wintun برنامه ساخته نشد.");
+        }
+
+        private NetworkInterface FindTunInterfaceByName()
+        {
+            try
+            {
+                return NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(n =>
+                    string.Equals(n.Name, TunName, StringComparison.OrdinalIgnoreCase) ||
+                    (n.Name ?? string.Empty).IndexOf(TunName, StringComparison.OrdinalIgnoreCase) >= 0);
+            }
+            catch { return null; }
         }
 
         private DefaultRoute FindDefaultRoute()
@@ -426,6 +546,7 @@ namespace VMessPro.Win
                     InterfaceIp = m.Groups["iface"].Value,
                     Metric = int.Parse(m.Groups["metric"].Value)
                 })
+                .Where(v => v.Gateway != TunAddress)
                 .OrderBy(v => v.Metric)
                 .ToList();
 
@@ -433,15 +554,17 @@ namespace VMessPro.Win
             {
                 var nic = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(n =>
                     n.OperationalStatus == OperationalStatus.Up &&
+                    !string.Equals(n.Name, TunName, StringComparison.OrdinalIgnoreCase) &&
                     n.GetIPProperties().UnicastAddresses.Any(a =>
                         a.Address.AddressFamily == AddressFamily.InterNetwork &&
                         a.Address.ToString() == item.InterfaceIp));
                 if (nic == null) continue;
-                var index = nic.GetIPProperties().GetIPv4Properties().Index;
+                var ipv4 = nic.GetIPProperties().GetIPv4Properties();
+                if (ipv4 == null) continue;
                 return new DefaultRoute
                 {
                     Gateway = item.Gateway,
-                    InterfaceIndex = index,
+                    InterfaceIndex = ipv4.Index,
                     InterfaceName = nic.Name
                 };
             }
@@ -527,6 +650,28 @@ namespace VMessPro.Win
             return process;
         }
 
+        private Process StartTun2Socks(string args)
+        {
+            var start = new ProcessStartInfo(_tun2SocksPath, args)
+            {
+                WorkingDirectory = _coreDir,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8
+            };
+            var process = new Process { StartInfo = start, EnableRaisingEvents = true };
+            process.OutputDataReceived += (s, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) AppendDiagnostic("tun2socks: " + e.Data); };
+            process.ErrorDataReceived += (s, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) AppendDiagnostic("tun2socks! " + e.Data); };
+            if (!process.Start()) throw new InvalidOperationException("tun2socks اجرا نشد.");
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            return process;
+        }
+
         private static ProcessResult RunProcessCapture(string file, string args, string workDir, int timeoutMs)
         {
             var start = new ProcessStartInfo(file, args)
@@ -583,6 +728,18 @@ namespace VMessPro.Win
             try { RunProcessCapture("route.exe", args, Environment.SystemDirectory, 4000); } catch { }
         }
 
+        private static void EnsureProcessAlive(Process process, string name)
+        {
+            if (process == null) throw new InvalidOperationException(name + " اجرا نشده است.");
+            try
+            {
+                if (process.HasExited)
+                    throw new InvalidOperationException(name + " متوقف شد (ExitCode=" + process.ExitCode + ").");
+            }
+            catch (InvalidOperationException) { throw; }
+            catch (Exception ex) { throw new InvalidOperationException("وضعیت " + name + " قابل بررسی نیست.", ex); }
+        }
+
         private static void KillQuietly(Process process)
         {
             if (process == null) return;
@@ -604,6 +761,23 @@ namespace VMessPro.Win
             {
                 if (!string.IsNullOrWhiteSpace(path) && File.Exists(path)) File.Delete(path);
             }
+            catch { }
+        }
+
+        private void FlushDnsQuietly()
+        {
+            try { RunProcessCapture("ipconfig.exe", "/flushdns", Environment.SystemDirectory, 5000); } catch { }
+        }
+
+        private void ResetDiagnostics()
+        {
+            try { File.WriteAllText(_diagnosticPath, "VMess Pro Windows tunnel diagnostics\r\n" + DateTime.Now + "\r\n", Encoding.UTF8); }
+            catch { }
+        }
+
+        private void AppendDiagnostic(string value)
+        {
+            try { File.AppendAllText(_diagnosticPath, DateTime.Now.ToString("HH:mm:ss.fff") + "  " + value + "\r\n", Encoding.UTF8); }
             catch { }
         }
 
