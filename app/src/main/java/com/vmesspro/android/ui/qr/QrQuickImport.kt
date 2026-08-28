@@ -390,7 +390,7 @@ private fun QrCameraPreview(
     }
 }
 
-@OptIn(ExperimentalGetImage::class)
+@ExperimentalGetImage
 private fun analyzeQrFrame(
     imageProxy: ImageProxy,
     scanner: BarcodeScanner,

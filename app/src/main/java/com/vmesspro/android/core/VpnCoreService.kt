@@ -12,7 +12,6 @@ import android.net.VpnService
 import android.os.Build
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
-import android.os.Process
 import android.system.OsConstants
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -486,14 +485,16 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler, Co
         destinationAddress: String,
         destinationPort: Int,
     ): ConnectionOwner {
-        check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) { "connection owner requires Android 10+" }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            throw UnsupportedOperationException("Connection owner lookup requires Android 10+")
+        }
         val cm = getSystemService(ConnectivityManager::class.java)
         val uid = cm.getConnectionOwnerUid(
             ipProtocol,
             InetSocketAddress(sourceAddress, sourcePort),
             InetSocketAddress(destinationAddress, destinationPort),
         )
-        check(uid != Process.INVALID_UID) { "android: connection owner not found" }
+        check(uid >= 0) { "android: connection owner not found" }
         val packages = packageManager.getPackagesForUid(uid).orEmpty()
         return ConnectionOwner().apply {
             userId = uid
@@ -647,7 +648,6 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler, Co
     }
 
     private fun createNotificationChannels() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
             NotificationChannel(VPN_CHANNEL, "VPN Connection", NotificationManager.IMPORTANCE_LOW).apply {
