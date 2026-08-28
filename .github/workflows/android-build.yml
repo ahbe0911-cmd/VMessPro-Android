@@ -2,7 +2,7 @@ name: Android Build
 
 on:
   push:
-    branches: [ main, develop, 'fix/**', 'refactor/**' ]
+    branches: [ main, develop, 'fix/**', 'refactor/**', 'feature/**' ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -63,8 +63,6 @@ jobs:
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
           export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
 
-          # Match Amnezia's current Android packaging fix: native libraries must be
-          # linkable on devices using 16 KiB memory pages.
           python3 - <<'PY'
           from pathlib import Path
           p = Path("build.sh")
@@ -134,7 +132,7 @@ jobs:
       - name: Upload compact APKs
         uses: actions/upload-artifact@v4
         with:
-          name: VMessPro-xray-compact-apks
+          name: VMessPro-Android-A54-0.6.0
           path: app/build/outputs/apk/compact/*.apk
           if-no-files-found: error
           retention-days: 14
