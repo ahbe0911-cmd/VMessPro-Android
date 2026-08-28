@@ -11,6 +11,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vmesspro.android.ui.AppRoot
 import com.vmesspro.android.ui.AppViewModel
 import com.vmesspro.android.ui.qr.QrQuickImport
+import com.vmesspro.android.ui.runtime.RuntimeStatusOverlay
 import com.vmesspro.android.ui.theme.VMessProTheme
 
 class MainActivity : ComponentActivity() {
@@ -23,6 +24,7 @@ class MainActivity : ComponentActivity() {
                 Box(Modifier.fillMaxSize()) {
                     AppRoot(appViewModel)
                     QrQuickImport(appViewModel)
+                    RuntimeStatusOverlay(appViewModel)
                 }
             }
         }
