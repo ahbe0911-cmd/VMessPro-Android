@@ -9,7 +9,10 @@ import androidx.room.Room
 import androidx.room.withTransaction
 import com.vmesspro.android.core.AndroidCoreAdapter
 import com.vmesspro.android.core.ConnectionState
+import com.vmesspro.android.core.SmartNodeSelector
+import com.vmesspro.android.core.VpnTelemetry
 import com.vmesspro.android.data.local.AppDatabase
+import com.vmesspro.android.data.local.ConnectionHistoryEntity
 import com.vmesspro.android.data.local.FavoriteEntity
 import com.vmesspro.android.data.local.NodeEntity
 import com.vmesspro.android.data.local.SubscriptionEntity
@@ -25,6 +28,8 @@ import java.net.URI
 import java.net.URL
 import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -33,6 +38,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 data class InstalledAppInfo(
@@ -52,6 +59,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val coreAdapter = AndroidCoreAdapter(application)
 
     val connectionState: StateFlow<ConnectionState> = coreAdapter.state
+    val telemetry: StateFlow<VpnTelemetry> = coreAdapter.telemetry
 
     val nodes: StateFlow<List<NodeEntity>> = database.nodeDao().observeAll().stateIn(
         viewModelScope,
@@ -64,6 +72,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         SharingStarted.WhileSubscribed(5_000),
         emptyList(),
     )
+
+    val connectionHistory: StateFlow<List<ConnectionHistoryEntity>> =
+        database.connectionHistoryDao().observeRecent(limit = 50).stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            emptyList(),
+        )
 
     val favoriteIds: StateFlow<Set<String>> = database.favoriteDao().observeIds()
         .map { it.toSet() }
@@ -84,6 +99,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _appsLoading = MutableStateFlow(false)
     val appsLoading: StateFlow<Boolean> = _appsLoading
+
+    private val _testingAllNodes = MutableStateFlow(false)
+    val testingAllNodes: StateFlow<Boolean> = _testingAllNodes
 
     val events = MutableSharedFlow<String>(extraBufferCapacity = 12)
 
@@ -125,7 +143,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             database.nodeDao().upsert(
                 listOf(
                     node.copy(
-                        lastLatencyMs = result.tcpLatencyMs,
+                        lastLatencyMs = result.tcpLatencyMs ?: node.lastLatencyMs,
                         lastProbeSucceeded = result.success,
                         lastTestedAt = now,
                         consecutiveFailures = if (result.success) 0 else node.consecutiveFailures + 1,
@@ -137,6 +155,67 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 if (result.success) "پینگ TCP: ${result.tcpLatencyMs ?: 0} ms"
                 else "تست سرور ناموفق بود"
             )
+        }
+    }
+
+    fun testAllNodes() = testAllNodesInternal(selectBestAfter = false)
+
+    fun testAllAndSelectBest() = testAllNodesInternal(selectBestAfter = true)
+
+    private fun testAllNodesInternal(selectBestAfter: Boolean) {
+        if (_testingAllNodes.value) return
+        val snapshot = nodes.value
+        if (snapshot.isEmpty()) {
+            events.tryEmit("سروری برای تست وجود ندارد")
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            _testingAllNodes.value = true
+            try {
+                val semaphore = Semaphore(MAX_PARALLEL_PROBES)
+                val results = snapshot.map { node ->
+                    async {
+                        semaphore.withPermit {
+                            node to coreAdapter.probe(node.stableId)
+                        }
+                    }
+                }.awaitAll()
+
+                val now = System.currentTimeMillis()
+                val updatedNodes = results.map { (node, result) ->
+                    node.copy(
+                        lastLatencyMs = result.tcpLatencyMs ?: node.lastLatencyMs,
+                        lastProbeSucceeded = result.success,
+                        lastTestedAt = now,
+                        consecutiveFailures = if (result.success) 0 else node.consecutiveFailures + 1,
+                        updatedAt = now,
+                    )
+                }
+                database.nodeDao().upsert(updatedNodes)
+
+                val successfulIds = results
+                    .asSequence()
+                    .filter { it.second.success }
+                    .map { it.first.stableId }
+                    .toSet()
+
+                if (selectBestAfter && successfulIds.isNotEmpty()) {
+                    val best = SmartNodeSelector
+                        .order(updatedNodes.filter { it.stableId in successfulIds }, preferredId = null, nowEpochMillis = now)
+                        .firstOrNull()
+                    if (best != null) {
+                        preferencesRepository.setSelectedNode(best.stableId)
+                        events.emit("بهترین سرور انتخاب شد: ${best.name} • ${best.lastLatencyMs ?: 0} ms")
+                    }
+                } else {
+                    events.emit("تست تمام شد: ${successfulIds.size} از ${snapshot.size} سرور پاسخ دادند")
+                }
+            } catch (error: Throwable) {
+                events.emit("تست گروهی سرورها کامل نشد: ${error.message ?: "خطای شبکه"}")
+            } finally {
+                _testingAllNodes.value = false
+            }
         }
     }
 
@@ -432,5 +511,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         coreAdapter.close()
         database.close()
         super.onCleared()
+    }
+
+    private companion object {
+        const val MAX_PARALLEL_PROBES = 8
     }
 }
