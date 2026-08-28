@@ -242,7 +242,7 @@ class VpnCoreService : VpnService() {
 
     private fun registerXraySocketProtection() {
         val controller = DialerController { fd ->
-            check(protect(fd.toInt())) { "Android نتوانست socket خروجی Xray را protect کند" }
+            protect(fd.toInt())
         }
         val dialError = LibXray.registerDialerController(controller)
         check(dialError.isNullOrBlank()) { "ثبت Xray dialer controller ناموفق بود: $dialError" }
