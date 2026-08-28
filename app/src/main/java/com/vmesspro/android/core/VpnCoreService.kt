@@ -18,21 +18,29 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.room.Room
 import com.vmesspro.android.MainActivity
-import com.vmesspro.android.R
 import com.vmesspro.android.data.local.AppDatabase
+import com.vmesspro.android.data.local.ConnectionHistoryEntity
 import com.vmesspro.android.data.preferences.SplitTunnelMode
 import com.vmesspro.android.data.security.SecureConfigStore
 import com.vmesspro.android.domain.config.ConfigParser
 import com.vmesspro.android.domain.config.ParseResult
+import io.nekohasekai.libbox.CommandClient
+import io.nekohasekai.libbox.CommandClientHandler
+import io.nekohasekai.libbox.CommandClientOptions
 import io.nekohasekai.libbox.CommandServer
 import io.nekohasekai.libbox.CommandServerHandler
+import io.nekohasekai.libbox.ConnectionEvents
 import io.nekohasekai.libbox.ConnectionOwner
 import io.nekohasekai.libbox.InterfaceUpdateListener
+import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.LocalDNSTransport
+import io.nekohasekai.libbox.LogIterator
 import io.nekohasekai.libbox.NetworkInterfaceIterator
 import io.nekohasekai.libbox.Notification as LibboxNotification
+import io.nekohasekai.libbox.OutboundGroupIterator
 import io.nekohasekai.libbox.OverrideOptions
 import io.nekohasekai.libbox.PlatformInterface
+import io.nekohasekai.libbox.StatusMessage
 import io.nekohasekai.libbox.StringIterator
 import io.nekohasekai.libbox.SystemProxyStatus
 import io.nekohasekai.libbox.TunOptions
@@ -53,7 +61,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import io.nekohasekai.libbox.NetworkInterface as LibboxNetworkInterface
 
-class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler {
+class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler, CommandClientHandler {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val connectionMutex = Mutex()
     private val secureStore = SecureConfigStore()
@@ -65,8 +73,19 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler {
     }
 
     private var commandServer: CommandServer? = null
+    private var telemetryClient: CommandClient? = null
     private var tunnel: ParcelFileDescriptor? = null
     private var connectedSince: Long = 0L
+    private var activeHistoryId: Long? = null
+    private var currentNodeId: String? = null
+
+    @Volatile private var latestUplink: Long = 0L
+    @Volatile private var latestDownlink: Long = 0L
+    @Volatile private var latestUplinkTotal: Long = 0L
+    @Volatile private var latestDownlinkTotal: Long = 0L
+    @Volatile private var latestConnectionsIn: Int = 0
+    @Volatile private var latestConnectionsOut: Int = 0
+    @Volatile private var latestTrafficAvailable: Boolean = false
 
     override fun onCreate() {
         super.onCreate()
@@ -78,10 +97,16 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler {
             CoreContract.ACTION_DISCONNECT -> {
                 scope.launch {
                     connectionMutex.withLock {
-                        shutdownLocked(closeNative = true, broadcast = true, stopService = true)
+                        shutdownLocked(
+                            closeNative = true,
+                            broadcast = true,
+                            stopService = true,
+                            historyStatus = "DISCONNECTED",
+                        )
                     }
                 }
             }
+
             CoreContract.ACTION_CONNECT -> {
                 startForeground(NOTIFICATION_ID, buildForegroundNotification("در حال آماده‌سازی اتصال…", false))
                 val request = ConnectRequest.from(intent, packageName)
@@ -90,9 +115,16 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler {
                         runCatching { connectLocked(request) }
                             .onFailure { error ->
                                 Log.e(TAG, "Core connect failed", error)
+                                markNodeFailure(request.profileId)
                                 sendState(CoreContract.STATE_ERROR, error.message ?: "خطای Core")
                                 updateNotification("اتصال ناموفق بود", false)
-                                shutdownLocked(closeNative = true, broadcast = false, stopService = true)
+                                shutdownLocked(
+                                    closeNative = true,
+                                    broadcast = false,
+                                    stopService = true,
+                                    historyStatus = "FAILED",
+                                    failureReason = error.message ?: "Core failure",
+                                )
                             }
                     }
                 }
@@ -106,12 +138,20 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler {
     override fun onRevoke() {
         scope.launch {
             connectionMutex.withLock {
-                shutdownLocked(closeNative = true, broadcast = true, stopService = true)
+                shutdownLocked(
+                    closeNative = true,
+                    broadcast = true,
+                    stopService = true,
+                    historyStatus = "REVOKED",
+                    failureReason = "VPN permission revoked by Android",
+                )
             }
         }
     }
 
     override fun onDestroy() {
+        runCatching { telemetryClient?.disconnect() }
+        telemetryClient = null
         runCatching { tunnel?.close() }
         tunnel = null
         runCatching { commandServer?.close() }
@@ -123,11 +163,32 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler {
     }
 
     private suspend fun connectLocked(request: ConnectRequest) {
-        shutdownLocked(closeNative = true, broadcast = false, stopService = false)
+        shutdownLocked(
+            closeNative = true,
+            broadcast = false,
+            stopService = false,
+            historyStatus = "REPLACED",
+        )
         sendState(CoreContract.STATE_PREPARING)
 
         check(prepare(this) == null) { "مجوز VPN صادر نشده است" }
         val node = database.nodeDao().getById(request.profileId) ?: error("سرور انتخاب‌شده پیدا نشد")
+        currentNodeId = node.stableId
+        activeHistoryId = database.connectionHistoryDao().insert(
+            ConnectionHistoryEntity(
+                nodeId = node.stableId,
+                nodeDisplayName = node.name,
+                countryCode = node.countryCode,
+                startedAt = System.currentTimeMillis(),
+                endedAt = null,
+                downloadedBytes = 0,
+                uploadedBytes = 0,
+                status = "CONNECTING",
+                failureReason = null,
+            )
+        )
+
+        resetTelemetry()
         val rawConfig = secureStore.decrypt(node.encryptedConfig)
         val profile = when (val parsed = ConfigParser.parse(rawConfig)) {
             is ParseResult.Success -> parsed.profile
@@ -153,13 +214,38 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler {
         server.startOrReloadService(config, overrides)
         check(tunnel != null) { "ساخت رابط TUN توسط Core انجام نشد" }
 
+        startTelemetryClient()
+
         sendState(CoreContract.STATE_VERIFYING)
         updateNotification("در حال بررسی مسیر واقعی VPN…", false)
         check(verifyTunnelEgress()) { "تونل ساخته شد اما دسترسی اینترنت از مسیر VPN تأیید نشد" }
 
         connectedSince = System.currentTimeMillis()
+        activeHistoryId?.let { database.connectionHistoryDao().setStatus(it, "CONNECTED") }
+        database.nodeDao().upsert(
+            listOf(
+                node.copy(
+                    lastUsedAt = connectedSince,
+                    consecutiveFailures = 0,
+                    updatedAt = connectedSince,
+                )
+            )
+        )
         sendState(CoreContract.STATE_CONNECTED, since = connectedSince)
         updateNotification("VPN متصل است • ${node.name}", true)
+    }
+
+    private fun startTelemetryClient() {
+        runCatching { telemetryClient?.disconnect() }
+        telemetryClient = null
+        val options = CommandClientOptions().apply {
+            addCommand(Libbox.CommandStatus)
+            statusInterval = 1_000_000_000L
+        }
+        val client = CommandClient(this, options)
+        runCatching { client.connect() }
+            .onSuccess { telemetryClient = client }
+            .onFailure { Log.w(TAG, "libbox status stream unavailable", it) }
     }
 
     private fun verifyTunnelEgress(): Boolean {
@@ -177,7 +263,33 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler {
         }
     }
 
-    private fun shutdownLocked(closeNative: Boolean, broadcast: Boolean, stopService: Boolean) {
+    private suspend fun markNodeFailure(profileId: String) {
+        runCatching {
+            val node = database.nodeDao().getById(profileId) ?: return
+            val now = System.currentTimeMillis()
+            database.nodeDao().upsert(
+                listOf(
+                    node.copy(
+                        consecutiveFailures = node.consecutiveFailures + 1,
+                        lastProbeSucceeded = false,
+                        lastTestedAt = now,
+                        updatedAt = now,
+                    )
+                )
+            )
+        }.onFailure { Log.w(TAG, "failed to persist node failure", it) }
+    }
+
+    private suspend fun shutdownLocked(
+        closeNative: Boolean,
+        broadcast: Boolean,
+        stopService: Boolean,
+        historyStatus: String,
+        failureReason: String? = null,
+    ) {
+        runCatching { telemetryClient?.disconnect() }
+        telemetryClient = null
+
         val server = commandServer
         commandServer = null
         if (closeNative) runCatching { server?.closeService() }
@@ -186,6 +298,24 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler {
         tunnel = null
         connectedSince = 0L
         PhysicalNetworkMonitor.stop()
+
+        activeHistoryId?.let { historyId ->
+            runCatching {
+                database.connectionHistoryDao().finish(
+                    id = historyId,
+                    endedAt = System.currentTimeMillis(),
+                    downloadedBytes = latestDownlinkTotal.coerceAtLeast(0L),
+                    uploadedBytes = latestUplinkTotal.coerceAtLeast(0L),
+                    status = historyStatus,
+                    failureReason = failureReason,
+                )
+            }.onFailure { Log.w(TAG, "failed to persist connection history", it) }
+        }
+        activeHistoryId = null
+        currentNodeId = null
+        resetTelemetry()
+        sendTelemetry()
+
         if (broadcast) sendState(CoreContract.STATE_DISCONNECTED)
         if (stopService) {
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -193,10 +323,26 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler {
         }
     }
 
+    private fun resetTelemetry() {
+        latestUplink = 0L
+        latestDownlink = 0L
+        latestUplinkTotal = 0L
+        latestDownlinkTotal = 0L
+        latestConnectionsIn = 0
+        latestConnectionsOut = 0
+        latestTrafficAvailable = false
+    }
+
     override fun serviceStop() {
         scope.launch {
             connectionMutex.withLock {
-                shutdownLocked(closeNative = false, broadcast = true, stopService = true)
+                shutdownLocked(
+                    closeNative = false,
+                    broadcast = true,
+                    stopService = true,
+                    historyStatus = "CORE_STOPPED",
+                    failureReason = "sing-box service stopped",
+                )
             }
         }
     }
@@ -351,10 +497,10 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler {
                 addresses = StringArray(javaInterface.interfaceAddresses.map { it.toPrefix() }.iterator())
                 dnsServer = StringArray(link.dnsServers.mapNotNull { it.hostAddress }.iterator())
                 type = when {
-                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> io.nekohasekai.libbox.Libbox.InterfaceTypeWIFI
-                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> io.nekohasekai.libbox.Libbox.InterfaceTypeCellular
-                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> io.nekohasekai.libbox.Libbox.InterfaceTypeEthernet
-                    else -> io.nekohasekai.libbox.Libbox.InterfaceTypeOther
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> Libbox.InterfaceTypeWIFI
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> Libbox.InterfaceTypeCellular
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> Libbox.InterfaceTypeEthernet
+                    else -> Libbox.InterfaceTypeOther
                 }
                 var interfaceFlags = 0
                 if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
@@ -405,12 +551,60 @@ class VpnCoreService : VpnService(), PlatformInterface, CommandServerHandler {
         manager.notify(notification.identifier, notification.typeID, item)
     }
 
+    // CommandClientHandler: sing-box status stream provides real traffic counters and active connections.
+    override fun connected() {
+        Log.d(TAG, "libbox telemetry connected")
+    }
+
+    override fun disconnected(message: String?) {
+        Log.d(TAG, "libbox telemetry disconnected: ${message.orEmpty()}")
+    }
+
+    override fun setDefaultLogLevel(level: Int) = Unit
+
+    override fun clearLogs() = Unit
+
+    override fun writeLogs(messageList: LogIterator?) = Unit
+
+    override fun writeStatus(message: StatusMessage) {
+        latestUplink = message.uplink.coerceAtLeast(0L)
+        latestDownlink = message.downlink.coerceAtLeast(0L)
+        latestUplinkTotal = message.uplinkTotal.coerceAtLeast(0L)
+        latestDownlinkTotal = message.downlinkTotal.coerceAtLeast(0L)
+        latestConnectionsIn = message.connectionsIn.coerceAtLeast(0)
+        latestConnectionsOut = message.connectionsOut.coerceAtLeast(0)
+        latestTrafficAvailable = message.trafficAvailable
+        sendTelemetry()
+    }
+
+    override fun writeGroups(message: OutboundGroupIterator?) = Unit
+
+    override fun initializeClashMode(modeList: StringIterator, currentMode: String) = Unit
+
+    override fun updateClashMode(newMode: String) = Unit
+
+    override fun writeConnectionEvents(events: ConnectionEvents?) = Unit
+
     private fun sendState(state: String, reason: String? = null, since: Long = 0L) {
         sendBroadcast(
             Intent(CoreContract.ACTION_STATE).setPackage(packageName).apply {
                 putExtra(CoreContract.EXTRA_STATE, state)
                 putExtra(CoreContract.EXTRA_REASON, reason)
                 if (since > 0L) putExtra(CoreContract.EXTRA_SINCE, since)
+            }
+        )
+    }
+
+    private fun sendTelemetry() {
+        sendBroadcast(
+            Intent(CoreContract.ACTION_TELEMETRY).setPackage(packageName).apply {
+                putExtra(CoreContract.EXTRA_UPLINK, latestUplink)
+                putExtra(CoreContract.EXTRA_DOWNLINK, latestDownlink)
+                putExtra(CoreContract.EXTRA_UPLINK_TOTAL, latestUplinkTotal)
+                putExtra(CoreContract.EXTRA_DOWNLINK_TOTAL, latestDownlinkTotal)
+                putExtra(CoreContract.EXTRA_CONNECTIONS_IN, latestConnectionsIn)
+                putExtra(CoreContract.EXTRA_CONNECTIONS_OUT, latestConnectionsOut)
+                putExtra(CoreContract.EXTRA_TRAFFIC_AVAILABLE, latestTrafficAvailable)
             }
         )
     }
