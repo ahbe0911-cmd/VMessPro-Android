@@ -7,6 +7,7 @@ internal object CoreContract {
     const val ACTION_TELEMETRY = "com.vmesspro.android.core.TELEMETRY"
 
     const val EXTRA_PROFILE_ID = "profile_id"
+    const val EXTRA_CANDIDATE_IDS = "candidate_profile_ids"
     const val EXTRA_SPLIT_MODE = "split_mode"
     const val EXTRA_INCLUDED = "included_packages"
     const val EXTRA_EXCLUDED = "excluded_packages"
