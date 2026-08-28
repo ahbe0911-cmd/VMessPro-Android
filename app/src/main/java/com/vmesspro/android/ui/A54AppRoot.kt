@@ -4,23 +4,17 @@ import android.net.VpnService
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -34,8 +28,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -61,20 +53,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
@@ -85,33 +73,25 @@ import com.vmesspro.android.data.local.NodeEntity
 import com.vmesspro.android.data.local.SubscriptionEntity
 import com.vmesspro.android.data.preferences.SplitTunnelMode
 import com.vmesspro.android.data.preferences.VpnPreferences
-import java.net.HttpURLConnection
-import java.net.URL
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
 import java.util.Locale
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
-private val A54Deep = Color(0xFF041A62)
-private val A54Blue = Color(0xFF0751C9)
-private val A54BrightBlue = Color(0xFF0879EE)
-private val A54Cyan = Color(0xFF10E3FF)
-private val A54Mint = Color(0xFF49F0AE)
-private val A54Lime = Color(0xFF78F456)
-private val A54Red = Color(0xFFFF4F65)
-private val A54Amber = Color(0xFFFFC74A)
-private val A54Glass = Color(0x2AFFFFFF)
-private val A54GlassStrong = Color(0x44FFFFFF)
-private val A54Border = Color(0x66FFFFFF)
-private val A54SoftText = Color(0xFFC7DDFF)
+private val A54Deep = PremiumVpnColors.BackgroundDeep
+private val A54Blue = PremiumVpnColors.Blue
+private val A54BrightBlue = PremiumVpnColors.Blue
+private val A54Cyan = PremiumVpnColors.Cyan
+private val A54Mint = PremiumVpnColors.Emerald
+private val A54Lime = PremiumVpnColors.Lime
+private val A54Red = PremiumVpnColors.Red
+private val A54Amber = PremiumVpnColors.Orange
+private val A54Glass = PremiumVpnColors.SurfaceSoft
+private val A54GlassStrong = PremiumVpnColors.SurfaceStrong
+private val A54Border = PremiumVpnColors.Border
+private val A54SoftText = PremiumVpnColors.TextSecondary
 
 private enum class A54Tab(val title: String, val glyph: String) {
     Home("خانه", "⌂"),
-    Locations("مکان‌ها", "●"),
+    Locations("سرورها", "●"),
     Stats("آمار", "▥"),
     Settings("تنظیمات", "⚙"),
 }
@@ -182,13 +162,18 @@ fun A54AppRoot(viewModel: AppViewModel) {
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        listOf(A54Deep, Color(0xFF043A9D), A54Blue, Color(0xFF075CD6))
+                        listOf(
+                            PremiumVpnColors.BackgroundDeep,
+                            PremiumVpnColors.BackgroundMid,
+                            PremiumVpnColors.BackgroundSoft,
+                        )
                     )
                 )
         ) {
             A54Background()
             Scaffold(
                 containerColor = Color.Transparent,
+                contentWindowInsets = WindowInsets(0, 0, 0, 0),
                 snackbarHost = { SnackbarHost(snackbar) },
                 bottomBar = {
                     if (!splitOpen) {
@@ -209,7 +194,7 @@ fun A54AppRoot(viewModel: AppViewModel) {
                     )
                 } else {
                     when (A54Tab.entries[tab]) {
-                        A54Tab.Home -> A54Home(
+                        A54Tab.Home -> PremiumHomeScreen(
                             modifier = Modifier.padding(padding),
                             state = state,
                             node = selectedNode,
@@ -223,6 +208,7 @@ fun A54AppRoot(viewModel: AppViewModel) {
                                 viewModel.loadInstalledApps()
                             },
                             onImport = { importOpen = true },
+                            onSettings = { tab = A54Tab.Settings.ordinal },
                         )
 
                         A54Tab.Locations -> A54Locations(
@@ -286,338 +272,6 @@ fun A54AppRoot(viewModel: AppViewModel) {
                     subscriptionOpen = false
                 },
             )
-        }
-    }
-}
-
-@Composable
-private fun A54Home(
-    modifier: Modifier,
-    state: ConnectionState,
-    node: NodeEntity?,
-    telemetry: VpnTelemetry,
-    testing: Boolean,
-    onPower: () -> Unit,
-    onLocations: () -> Unit,
-    onSmart: () -> Unit,
-    onSplit: () -> Unit,
-    onImport: () -> Unit,
-) {
-    val connected = state is ConnectionState.Connected
-    val busy = state == ConnectionState.Preparing || state == ConnectionState.Connecting ||
-        state == ConnectionState.Verifying || state == ConnectionState.Reconnecting
-    val failed = state == ConnectionState.Disconnected || state is ConnectionState.Error
-    var ip by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(connected) {
-        ip = if (connected) a54FetchPublicIp() else null
-    }
-
-    BoxWithConstraints(modifier.fillMaxSize().statusBarsPadding()) {
-        val compact = maxWidth <= 380.dp
-        val sidePadding = if (compact) 12.dp else 16.dp
-        val gap = if (compact) 8.dp else 10.dp
-        val powerSize = (maxWidth * 0.56f).coerceIn(192.dp, 224.dp)
-
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = sidePadding, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(gap),
-        ) {
-            item { A54DateTime() }
-            item {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    A54LogoTile()
-                    Column(
-                        Modifier.weight(1f).padding(horizontal = 10.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Text(
-                            "اتصال امن",
-                            color = Color.White,
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Black,
-                        )
-                        Text(
-                            "سریع، واقعی و بدون اتصال نمایشی",
-                            color = A54SoftText,
-                            style = MaterialTheme.typography.bodySmall,
-                            textAlign = TextAlign.Center,
-                        )
-                    }
-                    A54CrownTile()
-                }
-            }
-            item {
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    A54PowerButton(
-                        size = powerSize,
-                        connected = connected,
-                        busy = busy,
-                        failed = failed,
-                        enabled = !testing,
-                        onClick = onPower,
-                    )
-                }
-            }
-            item {
-                val statusColor = when {
-                    connected -> A54Lime
-                    busy -> A54Amber
-                    else -> A54Red
-                }
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(Modifier.size(9.dp).clip(CircleShape).background(statusColor))
-                    Spacer(Modifier.size(7.dp))
-                    Text(
-                        a54Status(state),
-                        color = statusColor,
-                        fontWeight = FontWeight.Black,
-                        style = MaterialTheme.typography.titleSmall,
-                    )
-                }
-            }
-            item { A54ServerCard(node, onLocations) }
-            item {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    A54Metric(
-                        title = "آی‌پی",
-                        value = ip?.let(::a54ShortIp) ?: if (connected) "…" else "—",
-                        subtitle = if (connected) "واقعی" else "قطع",
-                        glyph = "●",
-                        accent = if (connected) A54Mint else A54Red,
-                        modifier = Modifier.weight(1f),
-                    )
-                    A54Metric(
-                        title = "پینگ",
-                        value = node?.lastLatencyMs?.toString() ?: "—",
-                        subtitle = "ms",
-                        glyph = "⌁",
-                        accent = A54Mint,
-                        modifier = Modifier.weight(1f),
-                    )
-                    A54Metric(
-                        title = "سرعت",
-                        value = a54Mbps(telemetry.downloadBytesPerSecond),
-                        subtitle = "Mbps",
-                        glyph = "◴",
-                        accent = A54Cyan,
-                        modifier = Modifier.weight(1f),
-                    )
-                    A54Metric(
-                        title = "امنیت",
-                        value = node?.protocol?.uppercase() ?: "Xray",
-                        subtitle = if (connected) "فعال" else "آماده",
-                        glyph = "◆",
-                        accent = Color(0xFFC77BFF),
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-            }
-            item {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    A54Action("افزودن", "+", onImport, Modifier.weight(1f))
-                    A54Action(if (testing) "در حال تست" else "تست همه", "◉", onSmart, Modifier.weight(1f))
-                    A54Action("Split", "↗", onSplit, Modifier.weight(1f))
-                    A54Action("Xray", "⬡", onLocations, Modifier.weight(1f))
-                    A54Action("هوشمند", "↔", onSmart, Modifier.weight(1f))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun A54DateTime() {
-    var now by remember { mutableStateOf(LocalDateTime.now()) }
-    LaunchedEffect(Unit) {
-        while (isActive) {
-            now = LocalDateTime.now()
-            delay(1_000L)
-        }
-    }
-    val j = a54GregorianToJalali(now.year, now.monthValue, now.dayOfMonth)
-    val date = "${a54Weekday(now.dayOfWeek.value)} ${a54Digits(j.third.toString())} ${a54Month(j.second)} ${a54Digits(j.first.toString())}"
-    val time = a54Digits(now.format(DateTimeFormatter.ofPattern("HH:mm:ss", Locale.US)))
-
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(date, color = Color.White.copy(alpha = .94f), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = A54Glass,
-            border = androidx.compose.foundation.BorderStroke(1.dp, A54Border),
-        ) {
-            Text(time, modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp), color = Color.White, fontWeight = FontWeight.Black)
-        }
-    }
-}
-
-@Composable
-private fun A54PowerButton(
-    size: Dp,
-    connected: Boolean,
-    busy: Boolean,
-    failed: Boolean,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    val pulse by rememberInfiniteTransition(label = "a54Power").animateFloat(
-        initialValue = .975f,
-        targetValue = 1.025f,
-        animationSpec = infiniteRepeatable(tween(1_350), RepeatMode.Reverse),
-        label = "a54Pulse",
-    )
-    val accent = when {
-        connected -> A54Cyan
-        busy -> A54Amber
-        failed -> A54Red
-        else -> A54Red
-    }
-    val brush = when {
-        connected -> Brush.radialGradient(listOf(Color(0xFF5EEA9C), Color(0xFF0FB2DC), Color(0xFF0750D2)))
-        busy -> Brush.radialGradient(listOf(Color(0xFFFFD760), Color(0xFF1AA8D0), Color(0xFF0750D2)))
-        else -> Brush.radialGradient(listOf(Color(0xFFFF7481), Color(0xFFEC405C), Color(0xFF8B1D58)))
-    }
-
-    Box(
-        modifier = Modifier
-            .size(size)
-            .graphicsLayer { scaleX = pulse; scaleY = pulse }
-            .shadow(24.dp, CircleShape, ambientColor = accent.copy(alpha = .70f), spotColor = accent.copy(alpha = .85f))
-            .border(3.dp, Color.White.copy(alpha = .92f), CircleShape)
-            .padding(7.dp)
-            .border(4.dp, accent.copy(alpha = .90f), CircleShape)
-            .padding(10.dp)
-            .clip(CircleShape)
-            .background(brush)
-            .clickable(enabled = enabled, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Canvas(Modifier.fillMaxSize()) {
-            drawCircle(Color.White.copy(alpha = .13f), size.minDimension * .44f, style = Stroke(1.6.dp.toPx()))
-            drawCircle(accent.copy(alpha = .22f), size.minDimension * .34f)
-            drawArc(
-                color = Color.White,
-                startAngle = -52f,
-                sweepAngle = 284f,
-                useCenter = false,
-                topLeft = Offset(size.width * .34f, size.height * .28f),
-                size = androidx.compose.ui.geometry.Size(size.width * .32f, size.height * .32f),
-                style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round),
-            )
-            drawLine(
-                Color.White,
-                Offset(size.width * .50f, size.height * .23f),
-                Offset(size.width * .50f, size.height * .43f),
-                8.dp.toPx(),
-                StrokeCap.Round,
-            )
-        }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Spacer(Modifier.height(size * .28f))
-            Text(
-                when {
-                    connected -> "قطع اتصال"
-                    busy -> "در حال اتصال…"
-                    else -> "اتصال"
-                },
-                color = Color.White,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Black,
-            )
-            if (busy) {
-                Spacer(Modifier.height(6.dp))
-                CircularProgressIndicator(color = Color.White, strokeWidth = 2.5.dp, modifier = Modifier.size(21.dp))
-            }
-        }
-    }
-}
-
-@Composable
-private fun A54ServerCard(node: NodeEntity?, onClick: () -> Unit) {
-    A54GlassCard(onClick = onClick, strong = true) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Surface(shape = CircleShape, color = Color.White.copy(alpha = .96f)) {
-                Text(a54CountryFlag(node?.countryCode), modifier = Modifier.padding(10.dp), style = MaterialTheme.typography.titleLarge)
-            }
-            Column(Modifier.weight(1f)) {
-                Text("موقعیت فعلی", color = A54SoftText, style = MaterialTheme.typography.labelSmall)
-                Text(
-                    node?.name ?: "انتخاب سرور",
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Black,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    node?.let { "${it.protocol.uppercase()} • ${it.lastLatencyMs?.let { ms -> "$ms ms" } ?: "تست نشده"}" }
-                        ?: "برای اتصال یک پروفایل را انتخاب کنید",
-                    color = if (node?.lastProbeSucceeded == true) A54Mint else A54SoftText,
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1,
-                )
-            }
-            Surface(shape = CircleShape, color = A54GlassStrong) {
-                Text("‹", modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp), color = Color.White, fontWeight = FontWeight.Black)
-            }
-        }
-    }
-}
-
-@Composable
-private fun A54Metric(title: String, value: String, subtitle: String, glyph: String, accent: Color, modifier: Modifier = Modifier) {
-    Card(
-        modifier = modifier.height(92.dp),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = A54Glass),
-        border = androidx.compose.foundation.BorderStroke(1.dp, A54Border),
-    ) {
-        Column(Modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.SpaceBetween) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(glyph, color = accent, fontWeight = FontWeight.Black)
-                Text(title, color = Color.White.copy(alpha = .88f), style = MaterialTheme.typography.labelSmall, maxLines = 1)
-            }
-            Text(value, color = Color.White, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(subtitle, color = accent, style = MaterialTheme.typography.labelSmall, maxLines = 1)
-        }
-    }
-}
-
-@Composable
-private fun A54Action(title: String, glyph: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(
-        onClick = onClick,
-        modifier = modifier.height(72.dp),
-        shape = RoundedCornerShape(18.dp),
-        color = A54Glass,
-        border = androidx.compose.foundation.BorderStroke(1.dp, A54Border),
-        shadowElevation = 2.dp,
-    ) {
-        Column(
-            Modifier.fillMaxSize().padding(5.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text(glyph, color = A54Cyan, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(3.dp))
-            Text(title, color = Color.White, textAlign = TextAlign.Center, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -996,57 +650,61 @@ private fun A54Header(title: String, subtitle: String) {
 
 @Composable
 private fun A54BottomBar(selected: Int, onSelect: (Int) -> Unit) {
-    Surface(
-        modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 14.dp, vertical = 7.dp),
-        shape = RoundedCornerShape(26.dp),
-        color = Color(0xED031D68),
-        border = androidx.compose.foundation.BorderStroke(1.dp, A54Border),
-        shadowElevation = 10.dp,
+    val accents = listOf(
+        PremiumVpnColors.Purple,
+        PremiumVpnColors.Cyan,
+        PremiumVpnColors.Emerald,
+        PremiumVpnColors.Pink,
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
     ) {
-        Row(Modifier.fillMaxWidth().padding(5.dp), horizontalArrangement = Arrangement.SpaceAround) {
-            A54Tab.entries.forEachIndexed { index, item ->
-                val active = selected == index
-                Column(
-                    Modifier
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(if (active) A54BrightBlue.copy(alpha = .48f) else Color.Transparent)
-                        .clickable { onSelect(index) }
-                        .padding(horizontal = 12.dp, vertical = 5.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text(item.glyph, color = if (active) Color.White else A54SoftText, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleSmall)
-                    Text(item.title, color = if (active) Color.White else A54SoftText, style = MaterialTheme.typography.labelSmall, fontWeight = if (active) FontWeight.Black else FontWeight.Normal)
+        Surface(
+            modifier = Modifier.fillMaxWidth().height(64.dp),
+            shape = RoundedCornerShape(23.dp),
+            color = PremiumVpnColors.NavSurface,
+            border = androidx.compose.foundation.BorderStroke(1.dp, PremiumVpnColors.Border),
+            shadowElevation = 4.dp,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxSize().padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                A54Tab.entries.forEachIndexed { index, item ->
+                    val active = selected == index
+                    val accent = accents[index]
+                    Surface(
+                        modifier = Modifier.weight(1f).fillMaxSize(),
+                        onClick = { onSelect(index) },
+                        shape = RoundedCornerShape(17.dp),
+                        color = if (active) accent.copy(alpha = .16f) else Color.Transparent,
+                        border = if (active) androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = .30f)) else null,
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            Text(
+                                item.glyph,
+                                color = if (active) accent else PremiumVpnColors.TextMuted,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Black,
+                            )
+                            Text(
+                                item.title,
+                                color = if (active) PremiumVpnColors.TextPrimary else PremiumVpnColors.TextMuted,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                            )
+                        }
+                    }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun A54LogoTile() {
-    Surface(
-        shape = RoundedCornerShape(18.dp),
-        color = A54BrightBlue.copy(alpha = .72f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, A54Cyan.copy(alpha = .7f)),
-        shadowElevation = 8.dp,
-        modifier = Modifier.size(58.dp),
-    ) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("◇", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
-        }
-    }
-}
-
-@Composable
-private fun A54CrownTile() {
-    Surface(
-        shape = RoundedCornerShape(18.dp),
-        color = A54Glass,
-        border = androidx.compose.foundation.BorderStroke(1.dp, A54Border),
-        modifier = Modifier.size(58.dp),
-    ) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("♛", color = Color(0xFFFFD542), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
         }
     }
 }
@@ -1063,18 +721,18 @@ private fun A54GlassCard(
         Surface(
             onClick = onClick,
             modifier = cardModifier,
-            shape = RoundedCornerShape(22.dp),
+            shape = PremiumVpnShapes.Medium,
             color = if (strong) A54GlassStrong else A54Glass,
-            border = androidx.compose.foundation.BorderStroke(1.dp, if (strong) A54Cyan.copy(alpha = .70f) else A54Border),
-            shadowElevation = if (strong) 5.dp else 1.dp,
+            border = androidx.compose.foundation.BorderStroke(1.dp, if (strong) A54Cyan.copy(alpha = .48f) else A54Border),
+            shadowElevation = if (strong) 3.dp else 1.dp,
         ) { content() }
     } else {
         Surface(
             modifier = cardModifier,
-            shape = RoundedCornerShape(22.dp),
+            shape = PremiumVpnShapes.Medium,
             color = if (strong) A54GlassStrong else A54Glass,
-            border = androidx.compose.foundation.BorderStroke(1.dp, if (strong) A54Cyan.copy(alpha = .70f) else A54Border),
-            shadowElevation = if (strong) 5.dp else 1.dp,
+            border = androidx.compose.foundation.BorderStroke(1.dp, if (strong) A54Cyan.copy(alpha = .48f) else A54Border),
+            shadowElevation = if (strong) 3.dp else 1.dp,
         ) { content() }
     }
 }
@@ -1084,12 +742,14 @@ private fun A54Background() {
     Canvas(Modifier.fillMaxSize()) {
         val w = size.width
         val h = size.height
-        drawCircle(A54Cyan.copy(alpha = .20f), radius = w * .55f, center = Offset(w * .02f, h * .45f))
-        drawCircle(A54BrightBlue.copy(alpha = .22f), radius = w * .52f, center = Offset(w * .98f, h * .35f))
-        for (i in 0..8) {
-            val y = h * (.18f + i * .065f)
+        drawCircle(PremiumVpnColors.Purple.copy(alpha = .14f), radius = w * .48f, center = Offset(w * .10f, h * .20f))
+        drawCircle(PremiumVpnColors.Cyan.copy(alpha = .11f), radius = w * .52f, center = Offset(w * .92f, h * .42f))
+        drawCircle(PremiumVpnColors.Emerald.copy(alpha = .08f), radius = w * .38f, center = Offset(w * .18f, h * .80f))
+        drawCircle(PremiumVpnColors.Pink.copy(alpha = .06f), radius = w * .34f, center = Offset(w * .92f, h * .78f))
+        for (i in 0..7) {
+            val y = h * (.18f + i * .075f)
             drawArc(
-                A54Cyan.copy(alpha = .035f + i * .004f),
+                PremiumVpnColors.Cyan.copy(alpha = .018f + i * .003f),
                 startAngle = 190f,
                 sweepAngle = 160f,
                 useCenter = false,
@@ -1097,11 +757,6 @@ private fun A54Background() {
                 size = androidx.compose.ui.geometry.Size(w * 2f, h * .40f),
                 style = Stroke(width = 1.dp.toPx()),
             )
-        }
-        for (i in 0..20) {
-            val x = ((i * 71) % 100) / 100f * w
-            val y = ((i * 43) % 100) / 100f * h
-            drawCircle(Color.White.copy(alpha = .10f), radius = (1 + i % 3).dp.toPx(), center = Offset(x, y))
         }
     }
 }
@@ -1160,11 +815,6 @@ private fun a54CountryFlag(code: String?): String {
     return buildString { c.forEach { appendCodePoint(0x1F1E6 + (it - 'A')) } }
 }
 
-private fun a54ShortIp(ip: String): String = if (ip.length <= 11) ip else ip.take(8) + "…"
-
-private fun a54Mbps(bytesPerSecond: Long): String =
-    String.format(Locale.US, "%.1f", bytesPerSecond.coerceAtLeast(0L) * 8.0 / 1_000_000.0)
-
 private fun a54Rate(bytesPerSecond: Long): String {
     val value = bytesPerSecond.coerceAtLeast(0L).toDouble()
     return when {
@@ -1184,69 +834,6 @@ private fun a54Bytes(bytes: Long): String {
     }
 }
 
-private suspend fun a54FetchPublicIp(): String? = withContext(Dispatchers.IO) {
-    for (endpoint in listOf("https://api.ipify.org", "https://checkip.amazonaws.com")) {
-        val result = runCatching {
-            val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 4_000
-                readTimeout = 4_000
-                useCaches = false
-                requestMethod = "GET"
-                setRequestProperty("Connection", "close")
-            }
-            try {
-                if (connection.responseCode in 200..299) {
-                    connection.inputStream.bufferedReader().use { it.readText().trim() }.takeIf { it.isNotBlank() }
-                } else null
-            } finally {
-                connection.disconnect()
-            }
-        }.getOrNull()
-        if (!result.isNullOrBlank()) return@withContext result
-    }
-    null
-}
-
 private fun a54Digits(value: String): String = buildString(value.length) {
     value.forEach { ch -> append(if (ch in '0'..'9') "۰۱۲۳۴۵۶۷۸۹"[ch - '0'] else ch) }
-}
-
-private fun a54Weekday(javaDay: Int): String = when (javaDay) {
-    1 -> "دوشنبه"
-    2 -> "سه‌شنبه"
-    3 -> "چهارشنبه"
-    4 -> "پنجشنبه"
-    5 -> "جمعه"
-    6 -> "شنبه"
-    else -> "یکشنبه"
-}
-
-private fun a54Month(month: Int): String = listOf(
-    "", "فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
-    "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند",
-).getOrElse(month) { "" }
-
-private fun a54GregorianToJalali(gyInput: Int, gm: Int, gd: Int): Triple<Int, Int, Int> {
-    val gDm = intArrayOf(0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334)
-    var gy = gyInput
-    val gy2 = if (gm > 2) gy + 1 else gy
-    var days = 355666 + (365 * gy) + ((gy2 + 3) / 4) - ((gy2 + 99) / 100) + ((gy2 + 399) / 400) + gd + gDm[gm - 1]
-    var jy = -1595 + 33 * (days / 12053)
-    days %= 12053
-    jy += 4 * (days / 1461)
-    days %= 1461
-    if (days > 365) {
-        jy += (days - 1) / 365
-        days = (days - 1) % 365
-    }
-    val jm: Int
-    val jd: Int
-    if (days < 186) {
-        jm = 1 + days / 31
-        jd = 1 + days % 31
-    } else {
-        jm = 7 + (days - 186) / 30
-        jd = 1 + (days - 186) % 30
-    }
-    return Triple(jy, jm, jd)
 }
