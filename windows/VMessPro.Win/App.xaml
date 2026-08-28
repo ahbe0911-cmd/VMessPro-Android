@@ -1,0 +1,23 @@
+<Application x:Class="VMessPro.Win.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             StartupUri="MainWindow.xaml">
+    <Application.Resources>
+        <FontFamily x:Key="VazirFont">pack://application:,,,/Resources/#Vazirmatn</FontFamily>
+        <SolidColorBrush x:Key="SoftText" Color="#C7DDFF"/>
+        <SolidColorBrush x:Key="Cyan" Color="#10E3FF"/>
+        <SolidColorBrush x:Key="Mint" Color="#49F0AE"/>
+        <SolidColorBrush x:Key="Lime" Color="#78F456"/>
+        <SolidColorBrush x:Key="Danger" Color="#FF4F65"/>
+        <Style TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource VazirFont}"/>
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="FontFamily" Value="{StaticResource VazirFont}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="FontFamily" Value="{StaticResource VazirFont}"/>
+        </Style>
+    </Application.Resources>
+</Application>
