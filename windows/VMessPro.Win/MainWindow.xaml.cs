@@ -33,6 +33,7 @@ namespace VMessPro.Win
             UpdateSelectedProfile();
             UpdateSnapshot(_engine.Snapshot);
             UpdateClock();
+            SetNavState(HomeNav);
 
             _clockTimer.Tick += (s, e) => UpdateClock();
             _clockTimer.Start();
@@ -45,9 +46,9 @@ namespace VMessPro.Win
 
             if (!_engine.CoreFilesPresent)
             {
-                StatusText.Text = "Core ویندوز کامل نیست";
-                StatusText.Foreground = Brush("#FF4F65");
-                StatusDot.Fill = Brush("#FF4F65");
+                StatusText.Text = "فایل‌های Core ویندوز کامل نیستند";
+                StatusText.Foreground = Brush("#FFFF5E70");
+                StatusDot.Fill = Brush("#FFFF5E70");
             }
         }
 
@@ -59,44 +60,64 @@ namespace VMessPro.Win
         private void UpdateSnapshot(ConnectionSnapshot snapshot)
         {
             var connected = snapshot.State == WinVpnState.Connected;
-            var connecting = snapshot.State == WinVpnState.Preparing || snapshot.State == WinVpnState.Connecting || snapshot.State == WinVpnState.Verifying;
+            var connecting = snapshot.State == WinVpnState.Preparing ||
+                             snapshot.State == WinVpnState.Connecting ||
+                             snapshot.State == WinVpnState.Verifying;
+            var failed = snapshot.State == WinVpnState.Error;
 
             if (connected)
             {
-                SetPowerColors("#10E3FF", "#3EE8A5", "#0879EE");
+                SetPowerColors("#FF37D8FF", "#FF45E0A7", "#FF1686C8");
                 PowerLabel.Text = "قطع اتصال";
                 SecuritySubText.Text = "فعال";
-                SecuritySubText.Foreground = Brush("#49F0AE");
+                SecuritySubText.Foreground = Brush("#FF45E0A7");
                 IpSubText.Text = "واقعی";
-                IpSubText.Foreground = Brush("#49F0AE");
+                IpSubText.Foreground = Brush("#FF45E0A7");
             }
             else if (connecting)
             {
-                SetPowerColors("#FFC74A", "#FFD760", "#C67622");
-                PowerLabel.Text = "در حال اتصال…";
+                SetPowerColors("#FFFFC95E", "#FFFFB44A", "#FFB96832");
+                PowerLabel.Text = snapshot.State == WinVpnState.Verifying ? "در حال بررسی…" : "در حال اتصال…";
                 SecuritySubText.Text = "در حال بررسی";
-                SecuritySubText.Foreground = Brush("#FFC74A");
+                SecuritySubText.Foreground = Brush("#FFFFC95E");
                 IpSubText.Text = "در انتظار";
-                IpSubText.Foreground = Brush("#FFC74A");
+                IpSubText.Foreground = Brush("#FFFFC95E");
+            }
+            else if (failed)
+            {
+                SetPowerColors("#FFFF5E70", "#FFFF7185", "#FFB13C68");
+                PowerLabel.Text = "تلاش مجدد";
+                SecuritySubText.Text = "خطا";
+                SecuritySubText.Foreground = Brush("#FFFF5E70");
+                IpSubText.Text = "خطا";
+                IpSubText.Foreground = Brush("#FFFF5E70");
             }
             else
             {
-                SetPowerColors("#FF4F65", "#FF7481", "#8B1D58");
+                // Disconnected is intentionally blue/purple; red is reserved for a real error.
+                SetPowerColors("#FF9A7CFF", "#FF7768EE", "#FF3A4FD0");
                 PowerLabel.Text = "اتصال";
                 SecuritySubText.Text = "آماده";
-                SecuritySubText.Foreground = Brush("#C77BFF");
-                IpSubText.Text = snapshot.State == WinVpnState.Error ? "خطا" : "قطع";
-                IpSubText.Foreground = Brush("#FF4F65");
+                SecuritySubText.Foreground = Brush("#FF9A7CFF");
+                IpSubText.Text = "قطع";
+                IpSubText.Foreground = Brush("#FF9A7CFF");
             }
 
             StatusText.Text = snapshot.Message ?? "—";
-            var statusColor = connected ? "#78F456" : connecting ? "#FFC74A" : "#FF4F65";
+            var statusColor = connected
+                ? "#FF45E0A7"
+                : connecting
+                    ? "#FFFFC95E"
+                    : failed ? "#FFFF5E70" : "#FF9A7CFF";
             StatusText.Foreground = Brush(statusColor);
             StatusDot.Fill = Brush(statusColor);
 
-            if (snapshot.LatencyMs.HasValue) PingText.Text = snapshot.LatencyMs.Value.ToString(CultureInfo.InvariantCulture);
-            else if (_selected != null && _selected.LatencyMs.HasValue) PingText.Text = _selected.LatencyMs.Value.ToString(CultureInfo.InvariantCulture);
-            else PingText.Text = "—";
+            if (snapshot.LatencyMs.HasValue)
+                PingText.Text = snapshot.LatencyMs.Value.ToString(CultureInfo.InvariantCulture);
+            else if (_selected != null && _selected.LatencyMs.HasValue)
+                PingText.Text = _selected.LatencyMs.Value.ToString(CultureInfo.InvariantCulture);
+            else
+                PingText.Text = "—";
 
             IpText.Text = ShortIp(snapshot.PublicIp);
             StatsIpText.Text = "IP: " + (string.IsNullOrWhiteSpace(snapshot.PublicIp) ? "—" : snapshot.PublicIp);
@@ -115,7 +136,7 @@ namespace VMessPro.Win
         private void SetPowerColors(string outer, string center, string edge)
         {
             PowerOuter.BorderBrush = Brush(outer);
-            PowerMid.BorderBrush = Brush("#EEFFFFFF");
+            PowerMid.BorderBrush = Brush("#425A6B8A");
             PowerCore.BorderBrush = Brush(outer);
             PowerCenterStop.Color = (Color)ColorConverter.ConvertFromString(center);
             PowerEdgeStop.Color = (Color)ColorConverter.ConvertFromString(edge);
@@ -125,19 +146,26 @@ namespace VMessPro.Win
         private async void PowerButton_Click(object sender, RoutedEventArgs e)
         {
             if (_busy) return;
+
             if (_engine.State == WinVpnState.Connected)
             {
                 _busy = true;
                 PowerButton.IsEnabled = false;
                 try { await _engine.DisconnectAsync(); }
-                finally { _busy = false; PowerButton.IsEnabled = true; }
+                finally
+                {
+                    _busy = false;
+                    PowerButton.IsEnabled = true;
+                }
                 return;
             }
 
             if (_selected == null)
             {
                 ShowPage(ServersPage);
-                MessageBox.Show(this, "ابتدا یک کانفیگ اضافه و انتخاب کنید.", "VMess Pro", MessageBoxButton.OK, MessageBoxImage.Information);
+                StatusText.Text = "ابتدا یک کانفیگ اضافه و انتخاب کنید";
+                StatusText.Foreground = Brush("#FFFFC95E");
+                StatusDot.Fill = Brush("#FFFFC95E");
                 return;
             }
 
@@ -148,9 +176,10 @@ namespace VMessPro.Win
                 await _engine.ConnectAsync(_selected);
                 _store.SaveProfiles(_profiles);
             }
-            catch (Exception ex)
+            catch
             {
-                MessageBox.Show(this, ex.Message, "اتصال ناموفق", MessageBoxButton.OK, MessageBoxImage.Error);
+                // VpnEngine already publishes a precise inline Error state. Avoid the old modal
+                // MessageBox that covered the home screen and made the UI look broken.
             }
             finally
             {
@@ -178,6 +207,28 @@ namespace VMessPro.Win
             StatsPage.Visibility = Visibility.Collapsed;
             SettingsPage.Visibility = Visibility.Collapsed;
             page.Visibility = Visibility.Visible;
+
+            if (ReferenceEquals(page, HomePage)) SetNavState(HomeNav);
+            else if (ReferenceEquals(page, ServersPage)) SetNavState(ServersNav);
+            else if (ReferenceEquals(page, StatsPage)) SetNavState(StatsNav);
+            else SetNavState(SettingsNav);
+        }
+
+        private void SetNavState(Button active)
+        {
+            foreach (var button in new[] { HomeNav, ServersNav, StatsNav, SettingsNav })
+            {
+                if (ReferenceEquals(button, active))
+                {
+                    button.Background = Brush("#3B9A7CFF");
+                    button.BorderBrush = Brush("#559A7CFF");
+                }
+                else
+                {
+                    button.Background = Brushes.Transparent;
+                    button.BorderBrush = Brushes.Transparent;
+                }
+            }
         }
 
         private void AddButton_Click(object sender, RoutedEventArgs e)
@@ -216,6 +267,7 @@ namespace VMessPro.Win
                     }
                     existing[profile.Id] = profile;
                 }
+
                 _profiles = existing.Values.ToList();
                 if (_selected == null) _selected = imported.First();
                 _store.SaveProfiles(_profiles);
@@ -224,7 +276,6 @@ namespace VMessPro.Win
                 UpdateSelectedProfile();
                 ImportOverlay.Visibility = Visibility.Collapsed;
                 ShowPage(ServersPage);
-                MessageBox.Show(this, imported.Count + " کانفیگ ذخیره شد.", "VMess Pro", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
@@ -256,9 +307,12 @@ namespace VMessPro.Win
             if (_busy || _profiles.Count == 0) return;
             if (_engine.State == WinVpnState.Connected)
             {
-                MessageBox.Show(this, "برای تست همه ابتدا VPN را قطع کنید.", "VMess Pro", MessageBoxButton.OK, MessageBoxImage.Information);
+                StatusText.Text = "برای تست همه ابتدا VPN را قطع کنید";
+                StatusText.Foreground = Brush("#FFFFC95E");
+                StatusDot.Fill = Brush("#FFFFC95E");
                 return;
             }
+
             _busy = true;
             try
             {
@@ -267,7 +321,7 @@ namespace VMessPro.Win
                 {
                     done++;
                     StatusText.Text = "تست واقعی " + done + " از " + _profiles.Count;
-                    StatusText.Foreground = Brush("#FFC74A");
+                    StatusText.Foreground = Brush("#FFFFC95E");
                     try { await _engine.TestProfileAsync(profile); }
                     catch { profile.LastSuccess = false; }
                     BindProfiles();
@@ -277,6 +331,7 @@ namespace VMessPro.Win
                     .OrderByDescending(p => p.LastSuccess)
                     .ThenBy(p => p.LatencyMs ?? int.MaxValue)
                     .ToList();
+
                 if (selectBest)
                 {
                     var best = _profiles.FirstOrDefault(p => p.LastSuccess && p.LatencyMs.HasValue);
@@ -286,6 +341,7 @@ namespace VMessPro.Win
                         _store.SaveSelectedId(best.Id);
                     }
                 }
+
                 _store.SaveProfiles(_profiles);
                 BindProfiles();
                 UpdateSelectedProfile();
@@ -298,7 +354,7 @@ namespace VMessPro.Win
         {
             MessageBox.Show(
                 this,
-                "در Build ویندوز ۸.۱ تونل فعلی Full-system است. Split برنامه‌به‌برنامه به Windows Filtering Platform نیاز دارد و عمداً به‌صورت نمایشی فعال نشده است.",
+                "در Build ویندوز ۸.۱ تونل فعلی Full-system است. Split برنامه‌به‌برنامه به Windows Filtering Platform نیاز دارد و به‌صورت نمایشی فعال نشده است.",
                 "Split Tunnel",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -323,11 +379,14 @@ namespace VMessPro.Win
                 StatsServerText.Text = "سرور: —";
                 return;
             }
+
             ServerNameText.Text = string.IsNullOrWhiteSpace(_selected.Name) ? "Xray profile" : _selected.Name;
             var latency = _selected.LatencyMs.HasValue ? _selected.LatencyMs.Value + " ms" : "تست نشده";
             ServerMetaText.Text = (_selected.Protocol ?? "XRAY").ToUpperInvariant() + " • " + latency;
             SecurityText.Text = (_selected.Protocol ?? "Xray").ToUpperInvariant();
-            PingText.Text = _selected.LatencyMs.HasValue ? _selected.LatencyMs.Value.ToString(CultureInfo.InvariantCulture) : "—";
+            PingText.Text = _selected.LatencyMs.HasValue
+                ? _selected.LatencyMs.Value.ToString(CultureInfo.InvariantCulture)
+                : "—";
             StatsServerText.Text = "سرور: " + ServerNameText.Text;
         }
 
@@ -339,7 +398,10 @@ namespace VMessPro.Win
             var year = pc.GetYear(now);
             var month = pc.GetMonth(now);
             var day = pc.GetDayOfMonth(now);
-            PersianDateText.Text = PersianWeekday(now.DayOfWeek) + " " + ToPersianDigits(day.ToString()) + " " + PersianMonth(month) + " " + ToPersianDigits(year.ToString());
+            PersianDateText.Text = PersianWeekday(now.DayOfWeek) + " " +
+                                   ToPersianDigits(day.ToString(CultureInfo.InvariantCulture)) + " " +
+                                   PersianMonth(month) + " " +
+                                   ToPersianDigits(year.ToString(CultureInfo.InvariantCulture));
         }
 
         private static string PersianWeekday(DayOfWeek day)
