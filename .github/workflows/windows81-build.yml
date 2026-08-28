@@ -92,8 +92,16 @@ jobs:
           Invoke-WebRequest "https://github.com/xjasonlyu/tun2socks/releases/download/$env:TUN2SOCKS_VERSION/tun2socks-windows-386.zip" -OutFile deps/tun32.zip
           Expand-Archive deps/tun64.zip deps/tun64 -Force
           Expand-Archive deps/tun32.zip deps/tun32 -Force
-          if (-not (Get-ChildItem deps/tun64 -Recurse -Filter tun2socks.exe | Select-Object -First 1)) { throw 'x64 tun2socks.exe missing' }
-          if (-not (Get-ChildItem deps/tun32 -Recurse -Filter tun2socks.exe | Select-Object -First 1)) { throw 'x86 tun2socks.exe missing' }
+
+          $tun64 = Get-ChildItem deps/tun64 -Recurse -Filter '*.exe' | Where-Object { $_.Name -like 'tun2socks*' } | Select-Object -First 1
+          $tun32 = Get-ChildItem deps/tun32 -Recurse -Filter '*.exe' | Where-Object { $_.Name -like 'tun2socks*' } | Select-Object -First 1
+          if (-not $tun64) { throw 'x64 tun2socks executable missing' }
+          if (-not $tun32) { throw 'x86 tun2socks executable missing' }
+
+          Copy-Item $tun64.FullName deps/tun64/tun2socks.exe -Force
+          Copy-Item $tun32.FullName deps/tun32/tun2socks.exe -Force
+          Write-Host "x64 tun2socks: $($tun64.Name)"
+          Write-Host "x86 tun2socks: $($tun32.Name)"
 
       - name: Download and verify Wintun
         shell: pwsh
