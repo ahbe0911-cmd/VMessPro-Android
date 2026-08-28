@@ -43,8 +43,8 @@ android {
         applicationId = "com.vmesspro.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.5.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -66,7 +66,6 @@ android {
         }
     }
 
-    // Do not put emulator ABIs into phone APKs. CI emits one compact APK per phone ABI.
     splits {
         abi {
             isEnable = true
@@ -115,7 +114,8 @@ dependencies {
     implementation(composeBom)
     androidTestImplementation(composeBom)
 
-    implementation(files("libs/libbox.aar"))
+    // Same mobile Xray wrapper/tun2socks stack used by AmneziaVPN's Android Xray path.
+    implementation(files("libs/libxray.aar"))
 
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.activity:activity-compose:1.11.0")
