@@ -132,7 +132,7 @@ jobs:
       - name: Upload compact APKs
         uses: actions/upload-artifact@v4
         with:
-          name: VMessPro-Android-A54-0.6.0
+          name: VMessPro-Android-PremiumHome-0.6.1
           path: app/build/outputs/apk/compact/*.apk
           if-no-files-found: error
           retention-days: 14
