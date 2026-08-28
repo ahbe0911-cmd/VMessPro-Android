@@ -49,7 +49,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: app/libs/libxray.aar
-          key: libxray-${{ runner.os }}-${{ env.LIBXRAY_COMMIT }}-ndk-${{ env.ANDROID_NDK_VERSION }}-go-1.26
+          key: libxray-16k-${{ runner.os }}-${{ env.LIBXRAY_COMMIT }}-ndk-${{ env.ANDROID_NDK_VERSION }}-go-1.26
 
       - name: Build Amnezia libXray AAR
         if: steps.libxray-cache.outputs.cache-hit != 'true'
@@ -62,6 +62,21 @@ jobs:
           git checkout --detach "${LIBXRAY_COMMIT}"
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
           export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+
+          # Match Amnezia's current Android packaging fix: native libraries must be
+          # linkable on devices using 16 KiB memory pages.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("build.sh")
+          text = p.read_text()
+          old = '-checklinkname=0" -trimpath'
+          new = '-checklinkname=0 -extldflags=-Wl,-z,max-page-size=16384" -trimpath'
+          if old not in text:
+              raise SystemExit("Expected gomobile ldflags line not found in pinned libXray build.sh")
+          p.write_text(text.replace(old, new, 1))
+          PY
+          grep -n "max-page-size=16384" build.sh
+
           chmod +x build.sh
           ./build.sh android
           test -s libxray.aar
@@ -75,7 +90,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: app/libs/libxray.aar
-          key: libxray-${{ runner.os }}-${{ env.LIBXRAY_COMMIT }}-ndk-${{ env.ANDROID_NDK_VERSION }}-go-1.26
+          key: libxray-16k-${{ runner.os }}-${{ env.LIBXRAY_COMMIT }}-ndk-${{ env.ANDROID_NDK_VERSION }}-go-1.26
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
