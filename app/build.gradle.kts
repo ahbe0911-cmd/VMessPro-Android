@@ -43,8 +43,8 @@ android {
         applicationId = "com.vmesspro.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.6.1"
+        versionCode = 9
+        versionName = "0.6.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

@@ -47,5 +47,18 @@
                 android:value="Encrypted VPN tunnel using Xray-core and tun2socks" />
         </service>
 
+        <service
+            android:name=".core.XrayProbeWorker0Service"
+            android:exported="false"
+            android:process=":xray_probe_0" />
+        <service
+            android:name=".core.XrayProbeWorker1Service"
+            android:exported="false"
+            android:process=":xray_probe_1" />
+        <service
+            android:name=".core.XrayProbeWorker2Service"
+            android:exported="false"
+            android:process=":xray_probe_2" />
+
     </application>
 </manifest>

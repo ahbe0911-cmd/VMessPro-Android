@@ -21,14 +21,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
@@ -119,24 +120,24 @@ internal fun PremiumHomeScreen(
         val gap = when {
             heightCompact -> 4.dp
             short -> 6.dp
-            else -> 8.dp
+            else -> 9.dp
         }
-        val headerHeight = if (short) 50.dp else 58.dp
-        val serverHeight = if (short) 62.dp else 68.dp
-        val statsHeight = if (short) 60.dp else 68.dp
-        val actionsHeight = if (short) 54.dp else 60.dp
+        val headerHeight = if (short) 52.dp else 62.dp
+        val serverHeight = if (short) 66.dp else 78.dp
+        val statsHeight = if (short) 68.dp else 84.dp
+        val actionsHeight = if (short) 58.dp else 74.dp
         val orbMax = when {
-            heightCompact -> 124.dp
-            short -> 142.dp
-            else -> 160.dp
+            heightCompact -> 130.dp
+            short -> 154.dp
+            else -> 184.dp
         }
-        val orbMin = if (heightCompact) 112.dp else 124.dp
-        val orbSize = minOf(maxWidth * 0.40f, maxHeight * 0.25f).coerceIn(orbMin, orbMax)
+        val orbMin = if (heightCompact) 116.dp else 132.dp
+        val orbSize = minOf(maxWidth * 0.47f, maxHeight * 0.29f).coerceIn(orbMin, orbMax)
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = horizontalPadding, vertical = if (short) 3.dp else 5.dp),
+                .padding(horizontal = horizontalPadding, vertical = if (short) 3.dp else 6.dp),
             verticalArrangement = Arrangement.spacedBy(gap),
         ) {
             PremiumHeader(
@@ -226,44 +227,64 @@ private fun PremiumHeader(
                     "VMess Pro",
                     color = PremiumVpnColors.TextPrimary,
                     fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.titleLarge,
+                    fontSize = 23.sp,
                 )
-                Spacer(Modifier.size(7.dp))
+                Spacer(Modifier.size(9.dp))
                 Surface(
-                    shape = PremiumVpnShapes.Pill,
-                    color = PremiumVpnColors.Purple.copy(alpha = .18f),
-                    border = BorderStroke(1.dp, PremiumVpnColors.Purple.copy(alpha = .45f)),
+                    modifier = Modifier.shadow(
+                        elevation = 7.dp,
+                        shape = CircleShape,
+                        ambientColor = PremiumVpnColors.Purple.copy(alpha = .28f),
+                        spotColor = PremiumVpnColors.Purple.copy(alpha = .34f),
+                    ),
+                    shape = CircleShape,
+                    color = PremiumVpnColors.Purple.copy(alpha = .20f),
+                    border = BorderStroke(1.dp, PremiumVpnColors.Purple.copy(alpha = .75f)),
                 ) {
                     Text(
                         "PRO",
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
                         color = PremiumVpnColors.Purple,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 9.sp,
+                        fontSize = 10.sp,
                     )
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(6.dp).clip(CircleShape).background(statusColor))
-                Spacer(Modifier.size(5.dp))
                 Text(
-                    "$date  •  $time",
+                    date,
                     color = PremiumVpnColors.TextSecondary,
-                    style = MaterialTheme.typography.labelSmall,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.size(7.dp))
+                Text("•", color = statusColor, fontSize = 11.sp)
+                Spacer(Modifier.size(7.dp))
+                Text(
+                    time,
+                    color = PremiumVpnColors.TextSecondary,
+                    fontSize = 11.sp,
                     maxLines = 1,
                 )
             }
         }
 
         Surface(
-            modifier = Modifier.size(38.dp),
-            shape = CircleShape,
+            modifier = Modifier
+                .size(45.dp)
+                .shadow(
+                    elevation = 6.dp,
+                    shape = RoundedCornerShape(15.dp),
+                    ambientColor = PremiumVpnColors.Cyan.copy(alpha = .12f),
+                    spotColor = PremiumVpnColors.Cyan.copy(alpha = .16f),
+                ),
+            shape = RoundedCornerShape(15.dp),
             color = PremiumVpnColors.SurfaceSoft,
             border = BorderStroke(1.dp, PremiumVpnColors.Border),
             onClick = onSettings,
         ) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("⚙", color = PremiumVpnColors.TextPrimary, fontSize = 17.sp)
+                Text("⚙", color = PremiumVpnColors.TextPrimary, fontSize = 20.sp)
             }
         }
     }
@@ -339,74 +360,105 @@ private fun PremiumConnectSection(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        val innerOrbSize = (orbSize - 23.dp).coerceAtLeast(96.dp)
         Box(
             modifier = Modifier
                 .size(orbSize)
                 .graphicsLayer {
                     scaleX = pulse * settledScale
                     scaleY = pulse * settledScale
-                }
-                .shadow(
-                    elevation = 10.dp,
-                    shape = CircleShape,
-                    ambientColor = accent.copy(alpha = .22f),
-                    spotColor = accent.copy(alpha = .28f),
-                )
-                .border(1.5.dp, accent.copy(alpha = .48f), CircleShape)
-                .padding(5.dp)
-                .clip(CircleShape)
-                .background(Brush.linearGradient(listOf(baseA, baseB)))
-                .clickable(enabled = enabled, onClick = onPower),
+                },
             contentAlignment = Alignment.Center,
         ) {
             Canvas(Modifier.fillMaxSize()) {
-                val radius = size.minDimension * .23f
-                val centerX = size.width / 2f
-                val centerY = size.height / 2f
+                val outerRadius = size.minDimension / 2f
                 drawCircle(
-                    color = Color.White.copy(alpha = .08f),
-                    radius = size.minDimension * .43f,
+                    color = accent.copy(alpha = .30f),
+                    radius = outerRadius - 1.dp.toPx(),
+                    style = Stroke(width = 1.1.dp.toPx()),
+                )
+                drawCircle(
+                    color = accent.copy(alpha = .16f),
+                    radius = outerRadius * .88f,
                     style = Stroke(width = 1.dp.toPx()),
                 )
-                if (busy) {
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(accent.copy(alpha = .20f), Color.Transparent),
+                        center = center,
+                        radius = outerRadius,
+                    ),
+                    radius = outerRadius,
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(innerOrbSize)
+                    .shadow(
+                        elevation = 16.dp,
+                        shape = CircleShape,
+                        ambientColor = accent.copy(alpha = .34f),
+                        spotColor = accent.copy(alpha = .40f),
+                    )
+                    .border(1.2.dp, accent.copy(alpha = .70f), CircleShape)
+                    .padding(5.dp)
+                    .border(2.dp, Color.White.copy(alpha = .86f), CircleShape)
+                    .clip(CircleShape)
+                    .background(Brush.linearGradient(listOf(baseA, baseB)))
+                    .clickable(enabled = enabled, onClick = onPower),
+                contentAlignment = Alignment.Center,
+            ) {
+                Canvas(Modifier.fillMaxSize()) {
+                    val radius = size.minDimension * .22f
+                    val centerX = size.width / 2f
+                    val centerY = size.height / 2f
                     drawCircle(
-                        color = Color.White.copy(alpha = .18f),
-                        radius = size.minDimension * .38f,
-                        style = Stroke(width = 1.4.dp.toPx()),
+                        color = Color.White.copy(alpha = .07f),
+                        radius = size.minDimension * .43f,
+                        style = Stroke(width = 1.dp.toPx()),
+                    )
+                    if (busy) {
+                        drawCircle(
+                            color = Color.White.copy(alpha = .18f),
+                            radius = size.minDimension * .38f,
+                            style = Stroke(width = 1.4.dp.toPx()),
+                        )
+                    }
+                    drawArc(
+                        color = Color.White,
+                        startAngle = -44f,
+                        sweepAngle = 268f,
+                        useCenter = false,
+                        topLeft = Offset(centerX - radius, centerY - radius),
+                        size = Size(radius * 2f, radius * 2f),
+                        style = Stroke(width = 4.6.dp.toPx(), cap = StrokeCap.Round),
+                    )
+                    drawLine(
+                        color = Color.White,
+                        start = Offset(centerX, centerY - radius * 1.22f),
+                        end = Offset(centerX, centerY - radius * .12f),
+                        strokeWidth = 4.6.dp.toPx(),
+                        cap = StrokeCap.Round,
                     )
                 }
-                drawArc(
-                    color = Color.White,
-                    startAngle = -44f,
-                    sweepAngle = 268f,
-                    useCenter = false,
-                    topLeft = Offset(centerX - radius, centerY - radius),
-                    size = Size(radius * 2f, radius * 2f),
-                    style = Stroke(width = 4.6.dp.toPx(), cap = StrokeCap.Round),
-                )
-                drawLine(
-                    color = Color.White,
-                    start = Offset(centerX, centerY - radius * 1.22f),
-                    end = Offset(centerX, centerY - radius * .12f),
-                    strokeWidth = 4.6.dp.toPx(),
-                    cap = StrokeCap.Round,
-                )
             }
         }
 
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(8.dp))
         Crossfade(targetState = label, animationSpec = tween(220), label = "connectLabel") { text ->
             Text(
                 text,
                 color = PremiumVpnColors.TextPrimary,
                 fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.titleSmall,
+                fontSize = if (orbSize < 140.dp) 19.sp else 23.sp,
             )
         }
         Text(
             premiumStatus(state),
             color = accent,
-            style = MaterialTheme.typography.labelSmall,
+            fontSize = if (orbSize < 140.dp) 11.sp else 13.sp,
+            fontWeight = FontWeight.Medium,
             maxLines = 1,
         )
     }
@@ -436,61 +488,152 @@ private fun PremiumServerCard(
     Surface(
         modifier = modifier,
         onClick = onClick,
-        shape = PremiumVpnShapes.Medium,
+        shape = RoundedCornerShape(25.dp),
         color = PremiumVpnColors.Surface,
-        border = BorderStroke(1.dp, PremiumVpnColors.Border),
-        shadowElevation = 2.dp,
+        border = BorderStroke(1.dp, PremiumVpnColors.Border.copy(alpha = .85f)),
+        shadowElevation = 6.dp,
     ) {
-        Row(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 11.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(9.dp),
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(
+                            PremiumVpnColors.SurfaceStrong.copy(alpha = .78f),
+                            PremiumVpnColors.Blue.copy(alpha = .10f),
+                            PremiumVpnColors.Surface.copy(alpha = .94f),
+                        )
+                    )
+                )
         ) {
+            Row(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 13.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Surface(
+                    modifier = Modifier.size(34.dp),
+                    shape = CircleShape,
+                    color = PremiumVpnColors.SurfaceSoft,
+                    border = BorderStroke(1.dp, PremiumVpnColors.Border),
+                ) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("‹", color = PremiumVpnColors.TextPrimary, fontSize = 20.sp)
+                    }
+                }
+                Surface(
+                    shape = PremiumVpnShapes.Pill,
+                    color = statusColor.copy(alpha = .13f),
+                    border = BorderStroke(1.dp, statusColor.copy(alpha = .38f)),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(statusLabel, color = statusColor, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.size(5.dp))
+                        Box(Modifier.size(7.dp).clip(CircleShape).background(statusColor))
+                    }
+                }
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        node?.name ?: "انتخاب سرور",
+                        color = PremiumVpnColors.TextPrimary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        "$LRM$protocol  •  $ping",
+                        color = PremiumVpnColors.TextSecondary,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                    )
+                }
+
+                PremiumGlobeIcon(
+                    modifier = Modifier.size(50.dp),
+                    countryCode = node?.countryCode,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PremiumGlobeIcon(
+    modifier: Modifier,
+    countryCode: String?,
+) {
+    Box(
+        modifier = modifier
+            .shadow(
+                elevation = 8.dp,
+                shape = CircleShape,
+                ambientColor = PremiumVpnColors.Cyan.copy(alpha = .24f),
+                spotColor = PremiumVpnColors.Blue.copy(alpha = .30f),
+            )
+            .clip(CircleShape)
+            .background(PremiumVpnColors.Blue.copy(alpha = .10f))
+            .border(1.dp, PremiumVpnColors.Blue.copy(alpha = .36f), CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(34.dp)) {
+            val stroke = 2.2.dp.toPx()
+            drawCircle(
+                color = PremiumVpnColors.Cyan,
+                radius = size.minDimension / 2f - stroke,
+                style = Stroke(width = stroke),
+            )
+            drawOval(
+                color = PremiumVpnColors.Cyan,
+                topLeft = Offset(size.width * .27f, stroke),
+                size = Size(size.width * .46f, size.height - stroke * 2f),
+                style = Stroke(width = stroke),
+            )
+            drawLine(
+                color = PremiumVpnColors.Cyan,
+                start = Offset(stroke, size.height / 2f),
+                end = Offset(size.width - stroke, size.height / 2f),
+                strokeWidth = stroke,
+                cap = StrokeCap.Round,
+            )
+            drawArc(
+                color = PremiumVpnColors.Cyan,
+                startAngle = 18f,
+                sweepAngle = 144f,
+                useCenter = false,
+                topLeft = Offset(stroke, size.height * .17f),
+                size = Size(size.width - stroke * 2f, size.height * .66f),
+                style = Stroke(width = stroke),
+            )
+            drawArc(
+                color = PremiumVpnColors.Cyan,
+                startAngle = 198f,
+                sweepAngle = 144f,
+                useCenter = false,
+                topLeft = Offset(stroke, size.height * .17f),
+                size = Size(size.width - stroke * 2f, size.height * .66f),
+                style = Stroke(width = stroke),
+            )
+        }
+        val flag = premiumCountryFlag(countryCode)
+        if (flag != "🌐") {
             Surface(
-                modifier = Modifier.size(42.dp),
-                shape = RoundedCornerShape(13.dp),
-                color = Color.White.copy(alpha = .96f),
+                modifier = Modifier.align(Alignment.BottomEnd).size(17.dp),
+                shape = CircleShape,
+                color = PremiumVpnColors.NavSurface,
+                border = BorderStroke(1.dp, PremiumVpnColors.Border),
             ) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(premiumCountryFlag(node?.countryCode), fontSize = 22.sp)
+                    Text(flag, fontSize = 9.sp)
                 }
             }
-
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Text(
-                    node?.name ?: "انتخاب سرور",
-                    color = PremiumVpnColors.TextPrimary,
-                    fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    "$LRM$protocol • $ping",
-                    color = PremiumVpnColors.TextSecondary,
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1,
-                )
-            }
-
-            Surface(
-                shape = PremiumVpnShapes.Pill,
-                color = statusColor.copy(alpha = .13f),
-                border = BorderStroke(1.dp, statusColor.copy(alpha = .32f)),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(Modifier.size(6.dp).clip(CircleShape).background(statusColor))
-                    Spacer(Modifier.size(4.dp))
-                    Text(statusLabel, color = statusColor, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-            Text("‹", color = PremiumVpnColors.TextSecondary, fontSize = 20.sp)
         }
     }
 }
@@ -505,22 +648,36 @@ private fun PremiumStatsRow(
     compact: Boolean,
 ) {
     val stats = listOf(
-        PremiumStat("IP", publicIp?.let(::premiumCompactIp) ?: if (connected) "…" else "—", "●", PremiumVpnColors.Purple),
-        PremiumStat("Ping", node?.lastLatencyMs?.let { "$it" } ?: "—", "ms", PremiumVpnColors.Lime),
-        PremiumStat("Speed", premiumMbps(telemetry.downloadBytesPerSecond), "Mbps", PremiumVpnColors.Cyan),
-        PremiumStat("Protocol", node?.protocol?.uppercase() ?: "Xray", "◆", PremiumVpnColors.Pink),
+        PremiumStat("آی پی", publicIp?.let(::premiumCompactIp) ?: if (connected) "…" else "—", "⌖", PremiumVpnColors.Purple),
+        PremiumStat("پینگ", node?.lastLatencyMs?.let { "$it" } ?: "—", "⌁", PremiumVpnColors.Lime),
+        PremiumStat("سرعت", premiumMbps(telemetry.downloadBytesPerSecond), "◔", PremiumVpnColors.Cyan),
+        PremiumStat("پروتکل", node?.protocol?.uppercase() ?: "Xray", "◈", PremiumVpnColors.Pink),
     )
 
-    Row(
+    Surface(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp),
+        shape = RoundedCornerShape(if (compact) 19.dp else 24.dp),
+        color = PremiumVpnColors.SurfaceSoft,
+        border = BorderStroke(1.dp, PremiumVpnColors.Border.copy(alpha = .80f)),
+        shadowElevation = 4.dp,
     ) {
-        stats.forEach { stat ->
-            PremiumStatCard(
-                modifier = Modifier.weight(1f).fillMaxSize(),
-                stat = stat,
-                compact = compact,
-            )
+        Row(modifier = Modifier.fillMaxSize()) {
+            stats.forEachIndexed { index, stat ->
+                PremiumStatCard(
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    stat = stat,
+                    compact = compact,
+                )
+                if (index < stats.lastIndex) {
+                    Box(
+                        Modifier
+                            .fillMaxHeight()
+                            .padding(vertical = 8.dp)
+                            .width(1.dp)
+                            .background(PremiumVpnColors.Border.copy(alpha = .65f))
+                    )
+                }
+            }
         }
     }
 }
@@ -528,7 +685,7 @@ private fun PremiumStatsRow(
 private data class PremiumStat(
     val title: String,
     val value: String,
-    val unitOrGlyph: String,
+    val glyph: String,
     val accent: Color,
 )
 
@@ -538,45 +695,39 @@ private fun PremiumStatCard(
     stat: PremiumStat,
     compact: Boolean,
 ) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(if (compact) 13.dp else 16.dp),
-        color = PremiumVpnColors.SurfaceSoft,
-        border = BorderStroke(1.dp, PremiumVpnColors.Border),
+    Column(
+        modifier = modifier.padding(horizontal = if (compact) 4.dp else 6.dp, vertical = 5.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Column(
-            modifier = Modifier.fillMaxSize().padding(horizontal = if (compact) 5.dp else 7.dp, vertical = 5.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(
-                stat.title,
-                color = stat.accent,
-                fontSize = if (compact) 8.sp else 9.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-            )
-            Text(
-                stat.value,
-                color = PremiumVpnColors.TextPrimary,
-                fontSize = when {
-                    stat.title == "IP" && compact -> 9.sp
-                    stat.title == "IP" -> 10.sp
-                    compact -> 11.sp
-                    else -> 13.sp
-                },
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Clip,
-                textAlign = TextAlign.Center,
-            )
-            Text(
-                stat.unitOrGlyph,
-                color = PremiumVpnColors.TextMuted,
-                fontSize = 8.sp,
-                maxLines = 1,
-            )
-        }
+        Text(
+            stat.glyph,
+            color = stat.accent,
+            fontSize = if (compact) 15.sp else 18.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
+        Text(
+            stat.title,
+            color = stat.accent,
+            fontSize = if (compact) 8.sp else 10.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
+        Text(
+            stat.value,
+            color = PremiumVpnColors.TextPrimary,
+            fontSize = when {
+                stat.title == "آی پی" && compact -> 8.sp
+                stat.title == "آی پی" -> 10.sp
+                compact -> 12.sp
+                else -> 15.sp
+            },
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Clip,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
@@ -613,26 +764,32 @@ private fun PremiumQuickAction(
     Surface(
         modifier = modifier
             .fillMaxSize()
+            .shadow(
+                elevation = if (enabled) 5.dp else 1.dp,
+                shape = RoundedCornerShape(19.dp),
+                ambientColor = accent.copy(alpha = .18f),
+                spotColor = accent.copy(alpha = .22f),
+            )
             .clickable(enabled = enabled, onClick = onClick),
-        shape = RoundedCornerShape(15.dp),
-        color = PremiumVpnColors.SurfaceSoft,
-        border = BorderStroke(1.dp, accent.copy(alpha = if (enabled) .28f else .12f)),
+        shape = RoundedCornerShape(19.dp),
+        color = PremiumVpnColors.SurfaceSoft.copy(alpha = .92f),
+        border = BorderStroke(1.2.dp, accent.copy(alpha = if (enabled) .68f else .15f)),
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(vertical = 4.dp),
+            modifier = Modifier.fillMaxSize().padding(vertical = 5.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
             Text(
                 glyph,
                 color = if (enabled) accent else PremiumVpnColors.TextMuted,
-                fontSize = 15.sp,
+                fontSize = 21.sp,
                 fontWeight = FontWeight.Bold,
             )
             Text(
                 title,
                 color = if (enabled) PremiumVpnColors.TextPrimary else PremiumVpnColors.TextMuted,
-                fontSize = 9.sp,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
             )

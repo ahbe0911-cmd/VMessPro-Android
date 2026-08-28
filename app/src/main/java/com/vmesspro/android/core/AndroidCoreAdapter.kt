@@ -4,12 +4,17 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.ResultReceiver
 import androidx.core.content.ContextCompat
 import androidx.room.Room
 import com.vmesspro.android.data.local.AppDatabase
 import com.vmesspro.android.data.preferences.SplitTunnelMode
 import com.vmesspro.android.data.preferences.VpnPreferencesRepository
-import com.vmesspro.android.data.security.SecureConfigStore
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.coroutines.resume
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -19,14 +24,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 
 class AndroidCoreAdapter(context: Context) : CoreAdapter, AutoCloseable {
     private val appContext = context.applicationContext
     private val preferencesRepository = VpnPreferencesRepository(appContext)
-    private val secureStore = SecureConfigStore()
-    private val profileTester = XrayProfileTester(appContext)
     private val adapterScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val probeWorkerCounter = AtomicInteger(0)
     private val database = Room.databaseBuilder(appContext, AppDatabase::class.java, "vmesspro.db")
         .enableMultiInstanceInvalidation()
         .fallbackToDestructiveMigration()
@@ -135,6 +140,7 @@ class AndroidCoreAdapter(context: Context) : CoreAdapter, AutoCloseable {
             putStringArrayListExtra(CoreContract.EXTRA_EXCLUDED, ArrayList(exclude))
             putStringArrayListExtra(CoreContract.EXTRA_BANKING, ArrayList(preferences.bankingPackages))
             putExtra(CoreContract.EXTRA_CUSTOM_DNS, preferences.customDns)
+            putExtra(CoreContract.EXTRA_AUTO_RECONNECT, preferences.autoReconnect)
         }
         ContextCompat.startForegroundService(appContext, intent)
     }
@@ -151,9 +157,9 @@ class AndroidCoreAdapter(context: Context) : CoreAdapter, AutoCloseable {
      * A real Xray test: libXray starts the actual VMess/VLESS/Reality/Trojan outbound and
      * measures an HTTP request through its local SOCKS inbound. No raw TCP port probe is used.
      */
-    override suspend fun probe(profileId: String): ProbeResult = withContext(Dispatchers.IO) {
+    override suspend fun probe(profileId: String): ProbeResult {
         if (_state.value !is ConnectionState.Disconnected && _state.value !is ConnectionState.Error) {
-            return@withContext ProbeResult(
+            return ProbeResult(
                 tcpLatencyMs = null,
                 httpRttMs = null,
                 success = false,
@@ -162,19 +168,65 @@ class AndroidCoreAdapter(context: Context) : CoreAdapter, AutoCloseable {
         }
 
         val node = database.nodeDao().getById(profileId)
-            ?: return@withContext ProbeResult(null, null, false, "سرور پیدا نشد")
-        val rawConfig = runCatching { secureStore.decrypt(node.encryptedConfig) }
-            .getOrElse { error ->
-                return@withContext ProbeResult(
-                    tcpLatencyMs = null,
-                    httpRttMs = null,
-                    success = false,
-                    error = error.message ?: "خواندن کانفیگ ناموفق بود",
+            ?: return ProbeResult(null, null, false, "سرور پیدا نشد")
+        if (node.encryptedConfig.isBlank()) {
+            return ProbeResult(null, null, false, "کانفیگ سرور خالی است")
+        }
+
+        return withTimeoutOrNull(PROBE_REQUEST_TIMEOUT_MS) {
+            dispatchProbe(profileId)
+        } ?: ProbeResult(
+            tcpLatencyMs = null,
+            httpRttMs = null,
+            success = false,
+            error = "مهلت تست واقعی Xray تمام شد",
+        )
+    }
+
+    private suspend fun dispatchProbe(profileId: String): ProbeResult =
+        suspendCancellableCoroutine { continuation ->
+            val receiver = object : ResultReceiver(Handler(Looper.getMainLooper())) {
+                override fun onReceiveResult(resultCode: Int, resultData: Bundle?) {
+                    if (!continuation.isActive) return
+                    val data = resultData ?: Bundle.EMPTY
+                    continuation.resume(
+                        ProbeResult(
+                            tcpLatencyMs = data.optionalLong(XrayProbeWorkerService.EXTRA_TCP_LATENCY),
+                            httpRttMs = data.optionalLong(XrayProbeWorkerService.EXTRA_HTTP_RTT),
+                            success = resultCode == XrayProbeWorkerService.RESULT_SUCCESS &&
+                                data.getBoolean(XrayProbeWorkerService.EXTRA_SUCCESS, false),
+                            error = data.getString(XrayProbeWorkerService.EXTRA_ERROR),
+                        )
+                    )
+                }
+            }
+            val workerClass = PROBE_WORKERS[
+                Math.floorMod(probeWorkerCounter.getAndIncrement(), PROBE_WORKERS.size)
+            ]
+            val started = runCatching {
+                appContext.startService(
+                    Intent(appContext, workerClass).apply {
+                        action = XrayProbeWorkerService.ACTION_PROBE
+                        putExtra(XrayProbeWorkerService.EXTRA_PROFILE_ID, profileId)
+                        putExtra(XrayProbeWorkerService.EXTRA_RESULT_RECEIVER, receiver)
+                    }
+                )
+            }.getOrNull()
+
+            if (started == null && continuation.isActive) {
+                continuation.resume(
+                    ProbeResult(
+                        tcpLatencyMs = null,
+                        httpRttMs = null,
+                        success = false,
+                        error = "سرویس تست Xray اجرا نشد",
+                    )
                 )
             }
+        }
 
-        profileTester.test(rawConfig, node.host)
-    }
+    private fun Bundle.optionalLong(key: String): Long? =
+        if (containsKey(key)) getLong(key).takeIf { it > 0L } else null
 
     // Kept as a compatibility method for AppViewModel while the group-test UI is migrated.
     suspend fun validateProfileTraffic(profileId: String): ProbeResult = probe(profileId)
@@ -187,5 +239,11 @@ class AndroidCoreAdapter(context: Context) : CoreAdapter, AutoCloseable {
 
     private companion object {
         const val MAX_FAILOVER_CANDIDATES = 5
+        const val PROBE_REQUEST_TIMEOUT_MS = 12_000L
+        val PROBE_WORKERS = listOf(
+            XrayProbeWorker0Service::class.java,
+            XrayProbeWorker1Service::class.java,
+            XrayProbeWorker2Service::class.java,
+        )
     }
 }

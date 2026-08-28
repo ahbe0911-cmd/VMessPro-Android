@@ -5,7 +5,11 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager.NameNotFoundException
+import android.net.ConnectivityManager
 import android.net.IpPrefix
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.TrafficStats
 import android.net.VpnService
 import android.os.Build
@@ -58,8 +62,13 @@ class VpnCoreService : VpnService() {
     private var activeHistoryId: Long? = null
     private var activeConfigFile: java.io.File? = null
     private var nativeRunning = false
-    private var connectedSince = 0L
+    @Volatile private var connectedSince = 0L
     private var telemetryJob: Job? = null
+    private var networkRecoveryJob: Job? = null
+    @Volatile private var activeRequest: ConnectRequest? = null
+    @Volatile private var physicalNetwork: Network? = null
+    @Volatile private var recoverWhenNetworkReturns = false
+    private var physicalNetworkCallback: ConnectivityManager.NetworkCallback? = null
 
     @Volatile private var latestUplink: Long = 0L
     @Volatile private var latestDownlink: Long = 0L
@@ -69,6 +78,7 @@ class VpnCoreService : VpnService() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        registerPhysicalNetworkMonitor()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -124,6 +134,8 @@ class VpnCoreService : VpnService() {
     }
 
     override fun onDestroy() {
+        networkRecoveryJob?.cancel()
+        unregisterPhysicalNetworkMonitor()
         stopTelemetry()
         stopNativeEngine()
         runCatching { database.close() }
@@ -132,6 +144,7 @@ class VpnCoreService : VpnService() {
     }
 
     private suspend fun connectWithFailoverLocked(request: ConnectRequest) {
+        activeRequest = request
         val candidates = request.candidateProfileIds
             .ifEmpty { listOf(request.profileId) }
             .distinct()
@@ -217,6 +230,9 @@ class VpnCoreService : VpnService() {
             ?: error("Xray اجرا شد اما ترافیک واقعی HTTPS از VPN عبور نکرد")
 
         connectedSince = System.currentTimeMillis()
+        activeRequest = request.copy(
+            candidateProfileIds = (listOf(request.profileId) + request.candidateProfileIds).distinct(),
+        )
         activeHistoryId?.let { database.connectionHistoryDao().setStatus(it, "CONNECTED") }
         database.nodeDao().upsert(
             listOf(
@@ -259,7 +275,11 @@ class VpnCoreService : VpnService() {
             .addRoute("2000::", 3)
             .setMtu(XRAY_MTU)
             .setBlocking(false)
-            .setUnderlyingNetworks(null)
+
+        resolveUnderlyingNetwork()?.let { network ->
+            physicalNetwork = network
+            builder.setUnderlyingNetworks(arrayOf(network))
+        } ?: builder.setUnderlyingNetworks(null)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(false)
 
@@ -396,6 +416,123 @@ class VpnCoreService : VpnService() {
         }
     }
 
+    private fun registerPhysicalNetworkMonitor() {
+        val manager = getSystemService(ConnectivityManager::class.java)
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .build()
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                if (!isUsablePhysicalNetwork(network)) return
+                val shouldRecover = recoverWhenNetworkReturns
+                if (physicalNetwork == null || shouldRecover) physicalNetwork = network
+                if (shouldRecover) {
+                    recoverWhenNetworkReturns = false
+                    scheduleNetworkRecovery("شبکه فیزیکی دوباره در دسترس است")
+                }
+            }
+
+            override fun onLost(network: Network) {
+                if (network != physicalNetwork) return
+                physicalNetwork = null
+                val requestSnapshot = activeRequest
+                if (
+                    connectedSince > 0L &&
+                    requestSnapshot?.autoReconnect == true
+                ) {
+                    networkRecoveryJob?.cancel()
+                    val replacement = resolveUnderlyingNetwork()
+                    if (replacement != null) {
+                        physicalNetwork = replacement
+                        recoverWhenNetworkReturns = false
+                        scheduleNetworkRecovery("شبکه فیزیکی تغییر کرد")
+                    } else {
+                        recoverWhenNetworkReturns = true
+                        sendState(CoreContract.STATE_RECONNECTING)
+                        updateNotification("شبکه تغییر کرد؛ منتظر اتصال مجدد…", false)
+                    }
+                }
+            }
+        }
+
+        runCatching {
+            manager.registerNetworkCallback(request, callback)
+            physicalNetworkCallback = callback
+            resolveUnderlyingNetwork()?.let { physicalNetwork = it }
+        }.onFailure { error ->
+            Log.w(TAG, "Unable to register physical network monitor", error)
+        }
+    }
+
+    private fun unregisterPhysicalNetworkMonitor() {
+        val callback = physicalNetworkCallback ?: return
+        runCatching {
+            getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(callback)
+        }
+        physicalNetworkCallback = null
+    }
+
+    private fun resolveUnderlyingNetwork(): Network? {
+        val manager = getSystemService(ConnectivityManager::class.java)
+        val selected = physicalNetwork
+        if (selected != null && isUsablePhysicalNetwork(selected)) return selected
+
+        val active = runCatching { manager.activeNetwork }.getOrNull()
+        if (active != null && isUsablePhysicalNetwork(active)) return active
+
+        return runCatching {
+            manager.allNetworks.firstOrNull(::isUsablePhysicalNetwork)
+        }.getOrNull()
+    }
+
+    private fun isUsablePhysicalNetwork(network: Network): Boolean {
+        val capabilities = runCatching {
+            getSystemService(ConnectivityManager::class.java).getNetworkCapabilities(network)
+        }.getOrNull() ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+    }
+
+    private fun scheduleNetworkRecovery(reason: String) {
+        val requestSnapshot = activeRequest ?: return
+        if (!requestSnapshot.autoReconnect || connectedSince <= 0L) return
+
+        networkRecoveryJob?.cancel()
+        sendState(CoreContract.STATE_RECONNECTING)
+        updateNotification("در حال بازیابی اتصال پس از تغییر شبکه…", false)
+        networkRecoveryJob = scope.launch {
+            delay(NETWORK_RECOVERY_DEBOUNCE_MS)
+            if (resolveUnderlyingNetwork() == null) {
+                recoverWhenNetworkReturns = true
+                return@launch
+            }
+
+            connectionMutex.withLock {
+                val retryRequest = activeRequest ?: return@withLock
+                if (!retryRequest.autoReconnect || connectedSince <= 0L) return@withLock
+                shutdownLocked(
+                    broadcast = false,
+                    stopService = false,
+                    historyStatus = "NETWORK_CHANGED",
+                    failureReason = reason,
+                )
+                runCatching { connectWithFailoverLocked(retryRequest) }
+                    .onFailure { error ->
+                        Log.e(TAG, "Xray network recovery failed", error)
+                        sendState(CoreContract.STATE_ERROR, error.message ?: "بازیابی اتصال ناموفق بود")
+                        updateNotification("بازیابی اتصال ناموفق بود", false)
+                        shutdownLocked(
+                            broadcast = false,
+                            stopService = true,
+                            historyStatus = "FAILED",
+                            failureReason = error.message ?: "Network recovery failed",
+                        )
+                    }
+            }
+        }
+    }
+
     private fun startTelemetry() {
         stopTelemetry()
         val uid = applicationInfo.uid
@@ -484,6 +621,10 @@ class VpnCoreService : VpnService() {
 
         if (broadcast) sendState(CoreContract.STATE_DISCONNECTED)
         if (stopService) {
+            activeRequest = null
+            recoverWhenNetworkReturns = false
+            networkRecoveryJob?.cancel()
+            networkRecoveryJob = null
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
@@ -593,6 +734,7 @@ class VpnCoreService : VpnService() {
         val excludedPackages: Set<String>,
         val bankingPackages: Set<String>,
         val customDns: String?,
+        val autoReconnect: Boolean,
     ) {
         companion object {
             fun from(intent: Intent, ownPackage: String): ConnectRequest {
@@ -630,6 +772,7 @@ class VpnCoreService : VpnService() {
                     excludedPackages = excluded,
                     bankingPackages = banking,
                     customDns = intent.getStringExtra(CoreContract.EXTRA_CUSTOM_DNS),
+                    autoReconnect = intent.getBooleanExtra(CoreContract.EXTRA_AUTO_RECONNECT, true),
                 )
             }
         }
@@ -642,6 +785,7 @@ class VpnCoreService : VpnService() {
         const val MAX_FAILOVER_ATTEMPTS = 5
         const val FAILOVER_BASE_DELAY_MS = 250L
         const val FAILOVER_MAX_DELAY_MS = 1_000L
+        const val NETWORK_RECOVERY_DEBOUNCE_MS = 900L
 
         const val TUN_IPV4_ADDRESS = "10.0.42.2"
         const val TUN_IPV4_PREFIX = 30

@@ -65,6 +65,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.vmesspro.android.core.ConnectionState
@@ -661,18 +662,18 @@ private fun A54BottomBar(selected: Int, onSelect: (Int) -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
+            .padding(horizontal = 13.dp, vertical = 5.dp),
     ) {
         Surface(
-            modifier = Modifier.fillMaxWidth().height(64.dp),
-            shape = RoundedCornerShape(23.dp),
+            modifier = Modifier.fillMaxWidth().height(76.dp),
+            shape = RoundedCornerShape(28.dp),
             color = PremiumVpnColors.NavSurface,
-            border = androidx.compose.foundation.BorderStroke(1.dp, PremiumVpnColors.Border),
-            shadowElevation = 4.dp,
+            border = androidx.compose.foundation.BorderStroke(1.dp, PremiumVpnColors.Border.copy(alpha = .85f)),
+            shadowElevation = 8.dp,
         ) {
             Row(
-                modifier = Modifier.fillMaxSize().padding(4.dp),
-                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                modifier = Modifier.fillMaxSize().padding(5.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 A54Tab.entries.forEachIndexed { index, item ->
                     val active = selected == index
@@ -680,27 +681,45 @@ private fun A54BottomBar(selected: Int, onSelect: (Int) -> Unit) {
                     Surface(
                         modifier = Modifier.weight(1f).fillMaxSize(),
                         onClick = { onSelect(index) },
-                        shape = RoundedCornerShape(17.dp),
-                        color = if (active) accent.copy(alpha = .16f) else Color.Transparent,
-                        border = if (active) androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = .30f)) else null,
+                        shape = RoundedCornerShape(22.dp),
+                        color = Color.Transparent,
+                        border = if (active) androidx.compose.foundation.BorderStroke(1.2.dp, accent.copy(alpha = .76f)) else null,
+                        shadowElevation = if (active) 7.dp else 0.dp,
                     ) {
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center,
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    if (active) {
+                                        Brush.linearGradient(
+                                            listOf(
+                                                accent.copy(alpha = .88f),
+                                                PremiumVpnColors.Purple.copy(alpha = .72f),
+                                            )
+                                        )
+                                    } else {
+                                        Brush.linearGradient(listOf(Color.Transparent, Color.Transparent))
+                                    }
+                                ),
+                            contentAlignment = Alignment.Center,
                         ) {
-                            Text(
-                                item.glyph,
-                                color = if (active) accent else PremiumVpnColors.TextMuted,
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Black,
-                            )
-                            Text(
-                                item.title,
-                                color = if (active) PremiumVpnColors.TextPrimary else PremiumVpnColors.TextMuted,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-                            )
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
+                            ) {
+                                Text(
+                                    item.glyph,
+                                    color = if (active) Color.White else PremiumVpnColors.TextMuted,
+                                    fontSize = 21.sp,
+                                    fontWeight = FontWeight.Black,
+                                )
+                                Text(
+                                    item.title,
+                                    color = if (active) Color.White else PremiumVpnColors.TextMuted,
+                                    fontSize = 10.sp,
+                                    fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                                )
+                            }
                         }
                     }
                 }

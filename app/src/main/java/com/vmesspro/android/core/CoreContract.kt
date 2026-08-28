@@ -13,6 +13,7 @@ internal object CoreContract {
     const val EXTRA_EXCLUDED = "excluded_packages"
     const val EXTRA_BANKING = "banking_packages"
     const val EXTRA_CUSTOM_DNS = "custom_dns"
+    const val EXTRA_AUTO_RECONNECT = "auto_reconnect"
     const val EXTRA_STATE = "state"
     const val EXTRA_REASON = "reason"
     const val EXTRA_SINCE = "since"
