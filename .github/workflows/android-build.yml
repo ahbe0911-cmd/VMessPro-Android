@@ -125,19 +125,12 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
-            set -eu
             adb install -r app/build/outputs/apk/debug/app-debug.apk
             adb logcat -c
             adb shell am force-stop com.vmesspro.android
             adb shell am start -W -n com.vmesspro.android/.MainActivity
             sleep 6
-            pid="$(adb shell pidof -s com.vmesspro.android | tr -d '\r')"
-            if [ -z "${pid}" ]; then
-              echo "VMess Pro UI process died during startup"
-              adb logcat -d
-              exit 1
-            fi
-            echo "VMess Pro startup smoke test passed with PID ${pid}"
+            pid="$(adb shell pidof -s com.vmesspro.android | tr -d '\r')"; [ -n "$pid" ] || { echo "VMess Pro UI process died during startup"; adb logcat -d; exit 1; }; echo "VMess Pro startup smoke test passed with PID $pid"
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
