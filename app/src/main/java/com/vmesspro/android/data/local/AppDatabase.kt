@@ -10,7 +10,10 @@ import androidx.room.RoomDatabase
         FavoriteEntity::class,
         ConnectionHistoryEntity::class,
     ],
-    version = 1,
+    // Version 2 intentionally forces legacy v1 installations to reopen through Room's
+    // destructive fallback. Several development APKs used version 1 while the schema was
+    // still evolving, which can otherwise produce an identity-hash crash on real devices.
+    version = 2,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
