@@ -47,11 +47,8 @@ object LibboxBootstrap {
         )
 
         initialized = true
-        Log.i(TAG, "libbox initialized in ${currentProcessName()}")
+        Log.i(TAG, "libbox initialized in dedicated VPN process")
     }
-
-    private fun currentProcessName(): String =
-        runCatching { android.app.Application.getProcessName() }.getOrDefault("unknown")
 
     private const val TAG = "LibboxBootstrap"
 }
